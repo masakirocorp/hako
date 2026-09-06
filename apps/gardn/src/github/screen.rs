@@ -178,10 +178,26 @@ pub struct Control {
     pub action: GithubAction,
     pub label: String,
 }
+#[derive(Debug, Clone, Copy)]
+pub enum ListRow {
+    Entry(usize),
+    Metadata(usize),
+    Gap,
+}
+impl ListRow {
+    pub fn entry(self) -> Option<usize> {
+        match self {
+            Self::Entry(index) | Self::Metadata(index) => Some(index),
+            Self::Gap => None,
+        }
+    }
+}
 #[derive(Debug, Clone, Default)]
 pub struct Geometry {
     pub area: Rect,
     pub header: Rect,
+    pub scope: Rect,
+    pub list_rows: Vec<ListRow>,
     pub list: Rect,
     pub detail: Rect,
     pub status: Rect,
@@ -366,7 +382,6 @@ struct Tracked {
 #[derive(Debug, Clone)]
 pub struct GithubScreen {
     pub scope: ResolvedGithubScope,
-    pub label: String,
     pub tab: GithubTab,
     pub repository: Option<GithubRepository>,
     pub queue: Queue,
@@ -418,10 +433,9 @@ pub struct GithubScreen {
     file_scrollbar_drag: Option<u16>,
 }
 impl GithubScreen {
-    pub fn new(scope: ResolvedGithubScope, label: String) -> Self {
+    pub fn new(scope: ResolvedGithubScope) -> Self {
         let mut screen = Self {
             scope,
-            label,
             tab: GithubTab::Overview,
             repository: None,
             queue: Queue::Authored,

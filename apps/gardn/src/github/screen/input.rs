@@ -250,7 +250,7 @@ impl GithubScreen {
             KeyCode::End => {
                 if self.focus == Focus::List {
                     self.selected = self.visible_entries().len().saturating_sub(1);
-                    self.list_scroll = self.selected;
+                    self.list_scroll = self.geometry.list_rows.len();
                 } else {
                     self.detail_scroll = self.detail_len();
                 }
@@ -280,13 +280,22 @@ impl GithubScreen {
                 break;
             }
         }
-        let total = visible.len();
         if self.entries[visible[index]].selectable() {
             self.selected = index;
         }
-        self.list_scroll =
-            ModalListViewport::new(total, self.geometry.list.height as usize, self.list_scroll)
-                .ensure_visible(self.selected, None);
+        if let Some(row) = self
+            .geometry
+            .list_rows
+            .iter()
+            .position(|row| row.entry() == Some(self.selected))
+        {
+            self.list_scroll = ModalListViewport::new(
+                self.geometry.list_rows.len(),
+                self.geometry.list.height as usize,
+                self.list_scroll,
+            )
+            .ensure_visible(row, None);
+        }
     }
     pub(super) fn scroll(&mut self, focus: Focus, delta: i16) {
         let offset = if focus == Focus::List {
@@ -318,6 +327,9 @@ impl GithubScreen {
             self.scrollbar_drag = None;
             self.file_scrollbar_drag = None;
             self.diff_drag = false;
+            return Vec::new();
+        }
+        if !contains(self.geometry.area, point) {
             return Vec::new();
         }
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
@@ -375,7 +387,7 @@ impl GithubScreen {
                     self.geometry.detail
                 };
                 let total = if focus == Focus::List {
-                    self.visible_entries().len()
+                    self.geometry.list_rows.len()
                 } else {
                     self.detail_len()
                 };
@@ -471,7 +483,7 @@ impl GithubScreen {
             (
                 Focus::List,
                 self.geometry.list,
-                self.visible_entries().len(),
+                self.geometry.list_rows.len(),
                 self.list_scroll,
             ),
             (
@@ -514,8 +526,13 @@ impl GithubScreen {
                     self.scrollbar_drag = Some((focus, grab.unwrap_or(0)));
                 } else if let Some(row) = viewport.hit_visual_row(area, mouse.column, mouse.row) {
                     if focus == Focus::List {
-                        self.selected = row;
-                        return self.activate(GithubAction::Open);
+                        if let Some(index) = self.geometry.list_rows[row].entry() {
+                            if self.entries[self.visible_entries()[index]].selectable() {
+                                self.selected = index;
+                                return self.activate(GithubAction::Open);
+                            }
+                        }
+                        return Vec::new();
                     }
                     if self.detail_tab == DetailTab::Diff && self.diff.is_some() {
                         self.select_diff_row(

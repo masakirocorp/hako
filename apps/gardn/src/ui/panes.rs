@@ -475,7 +475,7 @@ pub(crate) fn compute_pane_infos(
     };
 
     let multi_pane = tab.layout.pane_count() > 1;
-    let terminal_active = app.mode == Mode::Terminal;
+    let terminal_active = matches!(app.mode, Mode::Terminal | Mode::Github);
 
     if tab.zoomed {
         let focused_id = tab.layout.focused();
@@ -600,7 +600,7 @@ pub(super) fn compute_pane_infos_for_view(
         .filter(|pane_id| layout.pane_ids().contains(pane_id))
         .unwrap_or_else(|| layout.focused());
     let multi_pane = layout.pane_count() > 1;
-    let terminal_active = client_view.mode == Mode::Terminal;
+    let terminal_active = matches!(client_view.mode, Mode::Terminal | Mode::Github);
 
     if client_view.tab_is_zoomed(&ws.id, tab.number) {
         let pane_inner = pane_inner_rect(area, multi_pane);
@@ -785,7 +785,7 @@ pub(super) fn render_panes_for_view(
 
     let multi_pane = tab.layout.pane_count() > 1;
     let active_accent = app.palette_for_workspace(ws_idx).accent;
-    let terminal_active = client_view.mode == Mode::Terminal;
+    let terminal_active = matches!(client_view.mode, Mode::Terminal | Mode::Github);
     let watching = client_view.tab_control.is_watching();
 
     for info in &client_view.computed.pane_infos {
@@ -950,7 +950,7 @@ pub(super) fn render_panes(
 
     let multi_pane = tab.layout.pane_count() > 1;
     let active_accent = app.active_workspace_accent_color();
-    let terminal_active = app.mode == Mode::Terminal;
+    let terminal_active = matches!(app.mode, Mode::Terminal | Mode::Github);
 
     for info in &app.view.pane_infos {
         let pane_state = ws.pane_state(info.id);

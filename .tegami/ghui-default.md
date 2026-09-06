@@ -5,7 +5,7 @@ packages:
 
 # Bring GitHub into Gardn
 
-GitHub now opens as a built-in, client-local ratatui screen using your existing `gh` authentication. It uses Gardn's palette, theme, scrollbars, and settings. There is no companion to install, pin, launch, or configure. Settings > Commands now contains only Browser (`terminal-browser`), Review (`hunk diff --watch`), and Editor (`fresh .`).
+GitHub now opens as a built-in, client-local ratatui view inside the invoking pane using your existing `gh` authentication. Sidebars, tabs, and other panes remain usable. Closing GitHub restores the underlying terminal. The view uses Gardn's palette, theme, scrollbars, section spacing, and action controls. Its header shows GitHub and repository scope without repeating the Space name. There is no companion to install, pin, launch, or configure. Settings > Commands now contains only Browser (`terminal-browser`), Review (`hunk diff --watch`), and Editor (`fresh .`).
 
 Each Space can use discovered GitHub repositories, exact selected repositories, or its Group organization. Automatic scope falls back to the Group organization or personal queues when no repositories are discovered. Repository narrowing never widens the base scope. Scope changes close an invalidated view. Reopen GitHub to apply current settings.
 

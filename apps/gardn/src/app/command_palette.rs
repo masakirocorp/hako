@@ -469,7 +469,11 @@ pub(crate) fn command_palette_commands_for_view(
     view: &ClientViewState,
 ) -> Vec<CommandPaletteCommand> {
     let mut commands = command_palette_commands(state);
-    if let Some(screen) = &view.github {
+    if let Some(screen) = view
+        .github
+        .as_ref()
+        .filter(|_| view.github_is_focused(state))
+    {
         commands.extend(
             screen
                 .contextual_actions()

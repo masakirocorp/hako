@@ -6,204 +6,110 @@ impl GithubScreen {
         self.update_visible_entries();
         let mut geometry = Geometry {
             area,
+            list_rows: std::mem::take(&mut self.geometry.list_rows),
             ..Geometry::default()
         };
+        geometry.list_rows.clear();
         if area.is_empty() {
             self.geometry = geometry;
             return;
         }
-        geometry.header = Rect::new(area.x, area.y, area.width.saturating_sub(7), 1);
-        geometry.controls.push(Control {
-            area: Rect::new(
-                area.right().saturating_sub(7).max(area.x),
-                area.y,
-                7.min(area.width),
-                1,
-            ),
-            action: A::CloseScreen,
-            label: "Close".into(),
-        });
-        let mut y = area.y.saturating_add(1);
-        let bottom = area.bottom().saturating_sub(2).max(y);
-        let chrome_bottom = bottom
-            .saturating_sub(3)
-            .max(y.saturating_add(2).min(bottom));
+        let roomy = area.height >= 18;
+        let horizontal = if area.width >= 50 { 2 } else { 1 };
+        let vertical = u16::from(roomy);
+        let inner = Rect::new(
+            area.x + horizontal.min(area.width),
+            area.y + vertical.min(area.height),
+            area.width.saturating_sub(horizontal * 2),
+            area.height.saturating_sub(vertical * 2),
+        );
+        let stack =
+            crate::ui::modal_stack_areas(inner, if roomy { 6 } else { 3 }, 1, 0, u16::from(roomy));
+        let header = stack.header;
+        let close_width = 11.min(header.width);
+        geometry.header = Rect::new(
+            header.x,
+            header.y,
+            header.width.saturating_sub(close_width + 1),
+            u16::from(!header.is_empty()),
+        );
+        if !header.is_empty() {
+            geometry.controls.push(Control {
+                area: Rect::new(header.right() - close_width, header.y, close_width, 1),
+                action: A::CloseScreen,
+                label: "Close".into(),
+            });
+        }
+        let row = |offset: u16| {
+            Rect::new(
+                header.x,
+                (header.y + offset).min(header.bottom()),
+                header.width,
+                u16::from(offset < header.height),
+            )
+        };
+        if roomy {
+            geometry.scope = row(1);
+        }
         let tabs: Vec<_> = GithubTab::ALL
             .into_iter()
-            .map(|tab| (A::Tab(tab), tab.label().to_owned()))
+            .enumerate()
+            .map(|(index, tab)| {
+                let label = if inner.width >= 66 {
+                    tab.label().to_owned()
+                } else if inner.width >= 46 || tab == self.tab {
+                    match tab {
+                        GithubTab::Repositories => "Repos",
+                        GithubTab::PullRequests => "PRs",
+                        _ => tab.label(),
+                    }
+                    .to_owned()
+                } else {
+                    (index + 1).to_string()
+                };
+                (A::Tab(tab), label)
+            })
             .collect();
-        if area.height >= 12 {
-            y = place_controls(
-                &mut geometry.controls,
-                Rect::new(
-                    area.x,
-                    y,
-                    area.width,
-                    chrome_bottom.saturating_sub(y).saturating_sub(1).min(3),
-                ),
-                &tabs,
-            );
-        } else {
-            let short_tabs = [
-                (A::Tab(GithubTab::Overview), "1".into()),
-                (A::Tab(GithubTab::Repositories), "2".into()),
-                (A::Tab(GithubTab::PullRequests), "3".into()),
-                (A::Tab(GithubTab::Issues), "4".into()),
-                (A::Tab(GithubTab::Actions), "5".into()),
-            ];
-            y = place_controls(
-                &mut geometry.controls,
-                Rect::new(area.x, y, area.width, u16::from(y < chrome_bottom)),
-                &short_tabs,
-            );
-        }
-        let mut toolbar = vec![
-            (A::Palette, "Actions…".into()),
-            (A::Refresh, "Refresh".into()),
-            (A::Filter, "Filter".into()),
-        ];
-        if self.has_more() {
-            toolbar.push((A::More, "More".into()));
-        }
-        if self.repository.is_some() {
-            toolbar.push((A::ResetRepository, "Reset repo".into()));
-        }
-        y = place_controls(
+        place_controls(
             &mut geometry.controls,
-            Rect::new(area.x, y, area.width, u16::from(y < chrome_bottom)),
-            &toolbar,
+            row(if roomy { 3 } else { 1 }),
+            &tabs,
         );
-        if matches!(self.tab, GithubTab::PullRequests | GithubTab::Issues) {
-            let queues: Vec<_> = [
-                Queue::Authored,
-                Queue::ReviewRequested,
-                Queue::Assigned,
-                Queue::Mentioned,
-                Queue::All,
-            ]
-            .into_iter()
-            .filter(|queue| self.tab != GithubTab::Issues || *queue != Queue::ReviewRequested)
-            .map(|queue| (A::Queue(queue), queue_label(queue).to_owned()))
-            .collect();
-            y = place_controls(
-                &mut geometry.controls,
-                Rect::new(area.x, y, area.width, u16::from(y < chrome_bottom)),
-                &queues,
-            );
-        }
-        if self.tab == GithubTab::Actions {
-            y = place_controls(
-                &mut geometry.controls,
-                Rect::new(area.x, y, area.width, u16::from(y < chrome_bottom)),
-                &[
-                    (A::Runs(RunFilter::All), "All".into()),
-                    (A::Runs(RunFilter::Failed), "Failed".into()),
-                    (A::Runs(RunFilter::Running), "Running".into()),
-                ],
-            );
-        }
         let has_detail =
             self.detail.is_some() || self.selected_key.is_some() || self.selected_run.is_some();
+        let mut actions = vec![(A::Palette, "Actions…".into())];
         if has_detail {
-            let mut actions = vec![
-                (A::Back, "Back".into()),
-                (A::Browser, "Browser".into()),
-                (A::CopyUrl, "Copy".into()),
-            ];
+            actions.push((A::Back, "Back".into()));
             if self.item().is_some() {
                 actions.extend([
                     (A::Detail(DetailTab::Description), "Description".into()),
                     (A::Detail(DetailTab::Conversation), "Conversation".into()),
-                    (A::Comment, "Comment".into()),
                 ]);
                 if self
                     .item()
                     .is_some_and(|item| item.summary.key.kind == ItemKind::PullRequest)
                 {
-                    actions.extend([
-                        (A::Detail(DetailTab::Diff), "Diff".into()),
-                        (A::Detail(DetailTab::Checks), "Checks".into()),
-                        (A::Merge, "Merge".into()),
-                    ]);
-                }
-                if self.selected_comment().is_some() {
-                    actions.insert(1, (A::Reply, "Reply".into()));
-                }
-                if self.owns_selected_comment() {
-                    actions.insert(2, (A::EditComment, "Edit".into()));
-                    actions.insert(3, (A::DeleteComment, "Delete".into()));
+                    actions.push((A::Detail(DetailTab::Diff), "Diff".into()));
                 }
             }
-            y = place_controls(
-                &mut geometry.controls,
-                Rect::new(
-                    area.x,
-                    y,
-                    area.width,
-                    chrome_bottom
-                        .saturating_sub(y)
-                        .min(if area.height >= 18 { 2 } else { 1 }),
-                ),
-                &actions,
-            );
+        } else {
+            actions.extend([(A::Refresh, "Refresh".into()), (A::Filter, "Filter".into())]);
+            if self.has_more() {
+                actions.push((A::More, "More".into()));
+            }
+            if matches!(self.tab, GithubTab::PullRequests | GithubTab::Issues) {
+                actions.push((A::Palette, format!("Queue: {}", queue_label(self.queue))));
+            }
+            if self.repository.is_some() {
+                actions.push((A::ResetRepository, "Reset repo".into()));
+            }
         }
-        if self.detail_tab == DetailTab::Diff && self.item().is_some() {
-            let options = self
-                .diff
-                .as_ref()
-                .map(DiffViewState::options)
-                .unwrap_or_default();
-            let actions = [
-                (
-                    A::ToggleFiles,
-                    if self.show_files {
-                        "Hide files"
-                    } else {
-                        "Show files"
-                    }
-                    .into(),
-                ),
-                (A::FindFile, "Find file".into()),
-                (
-                    A::ToggleSplit,
-                    if options.mode == DiffMode::Split {
-                        "Split"
-                    } else {
-                        "Unified"
-                    }
-                    .into(),
-                ),
-                (
-                    A::ToggleWrap,
-                    format!("Wrap {}", if options.wrap { "on" } else { "off" }),
-                ),
-                (
-                    A::ToggleWhitespace,
-                    format!(
-                        "Whitespace {}",
-                        if options.ignore_whitespace {
-                            "ignored"
-                        } else {
-                            "shown"
-                        }
-                    ),
-                ),
-                (A::InlineComment, "Comment lines".into()),
-                (A::NextThread, "Next thread".into()),
-            ];
-            y = place_controls(
-                &mut geometry.controls,
-                Rect::new(
-                    area.x,
-                    y,
-                    area.width,
-                    chrome_bottom.saturating_sub(y).min(2),
-                ),
-                &actions,
-            );
-        }
-        y = y.min(bottom);
-        let content = Rect::new(area.x, y, area.width, bottom.saturating_sub(y));
+        place_controls(
+            &mut geometry.controls,
+            row(if roomy { 5 } else { 2 }),
+            &actions,
+        );
+        let content = stack.content;
         if has_detail && area.width >= 110 {
             let list_width = (area.width / 3).min(45);
             geometry.list = Rect::new(content.x, content.y, list_width, content.height);
@@ -268,22 +174,32 @@ impl GithubScreen {
             self.rebuild_detail_rows(geometry.detail.width.saturating_sub(1).max(1) as usize);
             self.rows_dirty = false;
         }
-        let total = self.visible_entries().len();
+        let visible = self.visible_entries();
+        let total = visible.len();
+        for (index, entry) in visible.iter().enumerate() {
+            let entry = &self.entries[*entry];
+            if matches!(entry, Entry::Heading(_)) && index > 0 {
+                geometry.list_rows.push(ListRow::Gap);
+            }
+            geometry.list_rows.push(ListRow::Entry(index));
+            if roomy && matches!(entry, Entry::Item(_) | Entry::Run(_, _)) {
+                geometry.list_rows.push(ListRow::Metadata(index));
+            }
+        }
         self.selected = self.selected.min(total.saturating_sub(1));
-        self.list_scroll =
-            ModalListViewport::new(total, geometry.list.height as usize, self.list_scroll).scroll();
+        self.list_scroll = ModalListViewport::new(
+            geometry.list_rows.len(),
+            geometry.list.height as usize,
+            self.list_scroll,
+        )
+        .scroll();
         self.detail_scroll = ModalListViewport::new(
             self.detail_len(),
             geometry.detail.height as usize,
             self.detail_scroll,
         )
         .scroll();
-        geometry.status = Rect::new(
-            area.x,
-            bottom.min(area.bottom()),
-            area.width,
-            area.bottom().saturating_sub(bottom),
-        );
+        geometry.status = stack.footer.unwrap_or_default();
         if self.dialog.is_some() {
             geometry.controls.clear();
             let width = area.width.min(86);

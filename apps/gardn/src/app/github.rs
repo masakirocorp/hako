@@ -2,6 +2,44 @@ use super::{state, App, ClientViewState, Mode};
 use crate::events::AppEvent;
 
 impl App {
+    pub(super) fn handle_github_mouse_for_view(
+        &mut self,
+        view: &mut ClientViewState,
+        mouse: crossterm::event::MouseEvent,
+    ) -> bool {
+        let inside = view
+            .github_pane_rect(&self.state)
+            .contains((mouse.column, mouse.row).into());
+        if !inside && matches!(mouse.kind, crossterm::event::MouseEventKind::Up(_)) {
+            if let Some(screen) = view.github.as_mut() {
+                screen.handle_mouse(mouse);
+            }
+        }
+        if !matches!(view.mode, Mode::Terminal | Mode::Github)
+            || view.popup_pane.is_some()
+            || view.context_menu.is_some()
+            || view.github.is_none()
+            || !inside
+        {
+            return false;
+        }
+        if matches!(mouse.kind, crossterm::event::MouseEventKind::Down(_)) {
+            if let (Some(ws_idx), Some(pane_id)) = (view.active_workspace, view.github_pane_id) {
+                if let Some(tab_idx) = view.active_tab_index_for_workspace(&self.state, ws_idx) {
+                    view.focus_pane_in_workspace(&self.state, ws_idx, tab_idx, pane_id);
+                    view.mode = Mode::Github;
+                }
+            }
+        }
+        let effects = view
+            .github
+            .as_mut()
+            .map(|screen| screen.handle_mouse(mouse))
+            .unwrap_or_default();
+        self.apply_github_effects(view, effects);
+        true
+    }
+
     pub(crate) fn open_default_github(&mut self, workspace: Option<usize>) {
         self.with_default_github_view(|app, view| {
             view.active_workspace = workspace.or(app.state.active);
@@ -20,6 +58,7 @@ impl App {
             }
         }
         view.github_workspace_id = None;
+        view.github_pane_id = None;
         view.github_scope_settings = None;
         if matches!(view.mode, Mode::Github | Mode::CommandPalette) {
             view.return_to_active_workspace_mode();
@@ -30,6 +69,9 @@ impl App {
         let Some(ws_idx) = view.active_workspace else {
             return;
         };
+        let Some((_, pane_id)) = view.focused_pane_for_workspace(&self.state, ws_idx) else {
+            return;
+        };
         self.close_github_for_view(view);
         match self
             .state
@@ -38,6 +80,7 @@ impl App {
             Ok(scope) => {
                 let workspace = &self.state.workspaces[ws_idx];
                 view.github_workspace_id = Some(workspace.id.clone());
+                view.github_pane_id = Some(pane_id);
                 view.github_scope_settings = Some((
                     workspace.github_scope.clone(),
                     self.state
@@ -46,10 +89,7 @@ impl App {
                         .find(|group| group.id == workspace.group_id)
                         .and_then(|group| group.github_organization.clone()),
                 ));
-                view.github = Some(crate::github::screen::GithubScreen::new(
-                    scope,
-                    workspace.display_name(),
-                ));
+                view.github = Some(crate::github::screen::GithubScreen::new(scope));
                 view.mode = Mode::Github;
                 self.pump_github_for_view(view);
             }
@@ -91,12 +131,17 @@ impl App {
                 .iter()
                 .find(|group| group.id == workspace.group_id)
                 .and_then(|group| group.github_organization.as_ref());
-            view.github_scope_settings
-                .as_ref()
-                .is_some_and(|(scope, previous_organization)| {
+            view.github_pane_id.is_some_and(|pane_id| {
+                workspace
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.panes.contains_key(&pane_id))
+            }) && view.github_scope_settings.as_ref().is_some_and(
+                |(scope, previous_organization)| {
                     scope == &workspace.github_scope
                         && previous_organization.as_ref() == organization
-                })
+                },
+            )
         });
         if !valid {
             self.close_github_for_view(view);
@@ -185,10 +230,32 @@ impl App {
     ) -> R {
         let replacement = ClientViewState::from_default_client_state(&self.state);
         let mut view = std::mem::replace(&mut self.default_client_view, replacement);
+        view.active_tabs = self
+            .state
+            .workspaces
+            .iter()
+            .map(|workspace| (workspace.id.clone(), workspace.active_tab))
+            .collect();
+        view.focused_panes = self
+            .state
+            .workspaces
+            .iter()
+            .flat_map(|workspace| {
+                workspace.tabs.iter().map(|tab| {
+                    (
+                        super::view_state::ClientTabViewKey::new(&workspace.id, tab.number),
+                        tab.layout.focused(),
+                    )
+                })
+            })
+            .collect();
+        view.tab_canvas_view = None;
         view.active_workspace = self.state.active;
         view.mode = self.state.mode;
         view.computed = self.state.view.clone();
         view.command_palette = self.state.command_palette.clone();
+        view.sync_github_mode(&self.state);
+        view.compute_github(&self.state);
         let result = action(self, &mut view);
         self.state.mode = view.mode;
         self.state.command_palette = view.command_palette.clone();

@@ -356,6 +356,7 @@ pub(crate) struct ClientViewState {
     pub(crate) git_repo_picker: GitRepoPickerState,
     pub(crate) github: Option<crate::github::screen::GithubScreen>,
     pub(crate) github_workspace_id: Option<String>,
+    pub(crate) github_pane_id: Option<PaneId>,
     pub(crate) github_scope_settings: Option<(
         crate::github::GithubRepositoryScope,
         Option<crate::app::state::GithubOrganization>,
@@ -474,6 +475,7 @@ impl ClientViewState {
             git_repo_picker: state.git_repo_picker.clone(),
             github: None,
             github_workspace_id: None,
+            github_pane_id: None,
             github_scope_settings: None,
             context_menu: state.context_menu.clone(),
             selection: state.selection.clone(),
@@ -1277,11 +1279,69 @@ impl ClientViewState {
         false
     }
 
-    pub(crate) fn return_to_active_workspace_mode(&mut self) {
-        if self.github.is_some() {
-            self.mode = Mode::Github;
-            return;
+    pub(crate) fn github_is_focused(&self, state: &AppState) -> bool {
+        self.github.is_some()
+            && self.current_pane_focus_target(state).is_some_and(|target| {
+                self.github_workspace_id.as_ref() == Some(&target.workspace_id)
+                    && self.github_pane_id == Some(target.pane_id)
+            })
+    }
+
+    pub(crate) fn sync_github_mode(&mut self, state: &AppState) {
+        if matches!(self.mode, Mode::Terminal | Mode::Github) {
+            if self.github_is_focused(state) {
+                self.mode = Mode::Github;
+            } else {
+                self.return_to_active_workspace_mode();
+            }
         }
+    }
+
+    pub(crate) fn github_pane_rect(&self, state: &AppState) -> Rect {
+        let Some(workspace) = self
+            .active_workspace
+            .and_then(|idx| state.workspaces.get(idx))
+        else {
+            return Rect::default();
+        };
+        if self.github_workspace_id.as_ref() != Some(&workspace.id) {
+            return Rect::default();
+        }
+        let visible_tab = self
+            .active_tab_for_workspace(&workspace.id)
+            .and_then(|idx| workspace.tabs.get(idx));
+        if !visible_tab.is_some_and(|tab| {
+            self.github_pane_id
+                .is_some_and(|pane_id| tab.panes.contains_key(&pane_id))
+        }) {
+            return Rect::default();
+        }
+        let Some(info) = self
+            .computed
+            .pane_infos
+            .iter()
+            .find(|info| Some(info.id) == self.github_pane_id)
+        else {
+            return Rect::default();
+        };
+        match self.tab_canvas_view {
+            Some(canvas) => canvas
+                .project_rect(info.inner_rect)
+                .map(|rect| rect.destination)
+                .unwrap_or_default(),
+            None => info.inner_rect,
+        }
+    }
+
+    pub(crate) fn compute_github(&mut self, state: &AppState) {
+        self.sync_github_mode(state);
+        let area = self.github_pane_rect(state);
+        if let Some(screen) = self.github.as_mut() {
+            screen.compute(area);
+        }
+    }
+
+    pub(crate) fn return_to_active_workspace_mode(&mut self) {
         self.mode = if self.active_workspace.is_some() {
             Mode::Terminal
         } else {

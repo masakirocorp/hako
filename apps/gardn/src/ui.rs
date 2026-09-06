@@ -945,9 +945,6 @@ fn compute_view_for_client_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
-    if let Some(screen) = client_view.github.as_mut() {
-        screen.compute(area);
-    }
     if is_mobile_width(area, app.mobile_width_threshold) {
         compute_mobile_view_for_client(
             app,
@@ -957,6 +954,7 @@ fn compute_view_for_client_internal(
             resize_panes,
             cell_size,
         );
+        client_view.compute_github(app);
         return;
     }
     let show_context_bar = !client_view.zen_mode
@@ -1177,6 +1175,7 @@ fn compute_view_for_client_internal(
         pane_infos,
         split_borders,
     };
+    client_view.compute_github(app);
 }
 
 fn compute_view_internal(
@@ -1613,6 +1612,15 @@ pub fn render_with_runtime_registry(
     terminal_runtimes: &TerminalRuntimeRegistry,
     frame: &mut Frame,
 ) {
+    render_with_github(app, terminal_runtimes, None, frame);
+}
+
+pub(crate) fn render_with_github(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    screen: Option<&crate::github::screen::GithubScreen>,
+    frame: &mut Frame,
+) {
     fill_rect(
         frame,
         frame.area(),
@@ -1638,6 +1646,9 @@ pub fn render_with_runtime_registry(
         render_tab_bar(app, frame, tab_bar_area);
     }
     render_panes(app, terminal_runtimes, frame, terminal_area);
+    if let Some(screen) = screen {
+        github::render(screen, &app.palette, frame);
+    }
     if right_sidebar_area != Rect::default() {
         render_right_sidebar(app, terminal_runtimes, frame, right_sidebar_area);
     }
@@ -1741,6 +1752,9 @@ pub fn render_with_runtime_registry_for_view(
         render_tab_bar_for_view(app, client_view, frame, tab_bar_area);
     }
     render_panes_for_view(app, client_view, terminal_runtimes, frame, terminal_area);
+    if let Some(screen) = &client_view.github {
+        github::render(screen, &app.palette, frame);
+    }
     if client_view.tab_control.is_watching() {
         panes::wash_rect(frame, tab_bar_area, &app.palette);
         panes::wash_rect(frame, terminal_area, &app.palette);
@@ -1761,11 +1775,6 @@ pub fn render_with_runtime_registry_for_view(
         render_collapsed_sidebar_hover_for_view(app, client_view, frame);
     }
     render_context_bar(app, &client_view.computed.context_bar, frame);
-    if matches!(client_view.mode, Mode::Github | Mode::CommandPalette) {
-        if let Some(screen) = &client_view.github {
-            github::render(screen, &app.palette, frame);
-        }
-    }
 
     match client_view.mode {
         Mode::Onboarding => render_onboarding_overlay(app, frame, frame.area()),

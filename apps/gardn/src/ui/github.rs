@@ -8,18 +8,26 @@ use ratatui::{
 
 use super::{
     scrollbar::render_scrollbar,
-    widgets::{fill_rect, render_action_button, ModalListViewport},
+    widgets::{
+        fill_rect, panel_contrast_fg, render_action_button, render_modal_header_bar,
+        secondary_action_style, ModalListViewport,
+    },
 };
 use crate::{
     app::state::Palette,
     github::{
         diff::{DiffCell, DiffLineKind, DiffMode, DiffRow, DiffSide},
-        screen::{DetailTab, Dialog, Entry, Focus, GithubAction, GithubScreen, TextBuffer},
+        screen::{
+            DetailTab, Dialog, Entry, Focus, GithubAction, GithubScreen, ListRow, TextBuffer,
+        },
     },
 };
 
 pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
     let geometry = &screen.geometry;
+    if geometry.area.is_empty() {
+        return;
+    }
     fill_rect(
         frame,
         geometry.area,
@@ -31,29 +39,23 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
         .map(ToString::to_string)
         .unwrap_or_else(|| {
             screen.scope.organization.as_ref().map_or_else(
-                || {
-                    if screen.scope.repositories.is_empty() {
-                        "Personal queues".into()
-                    } else {
-                        format!("{} repositories", screen.scope.repositories.len())
-                    }
+                || match screen.scope.repositories.as_slice() {
+                    [] => "Personal queues".into(),
+                    [repository] => repository.to_string(),
+                    repositories => format!("{} repositories", repositories.len()),
                 },
                 |organization| format!("org {}", organization.as_str()),
             )
         });
+    let title = if geometry.scope.is_empty() {
+        format!("GitHub · {scope}")
+    } else {
+        "GitHub".into()
+    };
+    render_modal_header_bar(frame, geometry.header, &title, palette, false);
     frame.render_widget(
-        Paragraph::new(format!(
-            "GitHub · {} · {} · {}",
-            screen.label,
-            scope,
-            screen.tab.label()
-        ))
-        .style(
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        geometry.header,
+        Paragraph::new(scope).style(Style::default().fg(palette.subtext0)),
+        geometry.scope,
     );
     render_list(screen, palette, frame);
     render_detail(screen, palette, frame);
@@ -81,20 +83,23 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                 .bg(palette.surface_dim)
         } else if focused {
             Style::default()
-                .fg(palette.panel_bg)
+                .fg(panel_contrast_fg(palette))
                 .bg(palette.accent)
-                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else if danger {
             Style::default().fg(palette.red).bg(palette.surface0)
         } else if active {
             Style::default()
-                .fg(palette.accent)
-                .bg(palette.surface1)
+                .fg(panel_contrast_fg(palette))
+                .bg(palette.accent)
                 .add_modifier(Modifier::BOLD)
+        } else if matches!(control.action, GithubAction::Tab(_)) {
+            Style::default().fg(palette.overlay1)
         } else {
-            Style::default().fg(palette.text).bg(palette.surface0)
+            secondary_action_style(palette)
         };
-        render_action_button(frame, control.area, None, &control.label, style);
+        let hint = (control.action == GithubAction::CloseScreen).then_some("Esc");
+        render_action_button(frame, control.area, hint, &control.label, style);
     }
     if screen.dialog.is_none() {
         let status = if screen.submitting {
@@ -133,7 +138,11 @@ fn render_list(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
         return;
     }
     let entries = screen.visible_entries();
-    let viewport = ModalListViewport::new(entries.len(), area.height as usize, screen.list_scroll);
+    let viewport = ModalListViewport::new(
+        screen.geometry.list_rows.len(),
+        area.height as usize,
+        screen.list_scroll,
+    );
     let scroll = viewport.scroll_area(area);
     if entries.is_empty() {
         let text = if screen.loading() {
@@ -152,8 +161,13 @@ fn render_list(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             scroll.body,
         );
     }
-    for (row, visible) in viewport.visible_range().enumerate() {
+    for (row, visual) in viewport.visible_range().enumerate() {
+        let list_row = screen.geometry.list_rows[visual];
+        let Some(visible) = list_row.entry() else {
+            continue;
+        };
         let entry = &screen.entries[entries[visible]];
+        let metadata = matches!(list_row, ListRow::Metadata(_));
         let selected = visible == screen.selected;
         let heading = matches!(entry, Entry::Heading(_));
         let style = if heading {
@@ -172,13 +186,39 @@ fn render_list(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
         } else {
             Style::default().fg(palette.text)
         };
+        let text = match (entry, metadata) {
+            (Entry::Item(item), false) => item.title.clone(),
+            (Entry::Item(item), true) => format!(
+                "{} #{} · {}{}",
+                item.key.repository,
+                item.key.number,
+                item.state,
+                if item.is_draft { " · draft" } else { "" }
+            ),
+            (Entry::Run(_, run), false) => run.display_title.clone(),
+            (Entry::Run(repo, run), true) => format!(
+                "{} #{} · {}",
+                repo,
+                run.run_number,
+                run.conclusion.as_deref().unwrap_or(&run.status)
+            ),
+            _ => entry.label(),
+        };
+        let text = super::text::truncate_end(&text, scroll.body.width.saturating_sub(2) as usize);
         frame.render_widget(
             Paragraph::new(format!(
-                "{}{}",
-                if selected && !heading { "› " } else { "  " },
-                entry.label()
+                "{}{text}",
+                if selected && !heading && !metadata {
+                    "› "
+                } else {
+                    "  "
+                },
             ))
-            .style(style),
+            .style(if metadata {
+                style.fg(palette.subtext0).remove_modifier(Modifier::BOLD)
+            } else {
+                style
+            }),
             Rect::new(
                 scroll.body.x,
                 scroll.body.y + row as u16,

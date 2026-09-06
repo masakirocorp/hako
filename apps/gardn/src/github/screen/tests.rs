@@ -46,15 +46,10 @@ fn details(number: u64) -> Box<ItemDetails> {
     })
 }
 fn queued_screen() -> GithubScreen {
-    let mut screen = GithubScreen::new(
-        ResolvedGithubScope {
-            repositories: vec![
-                GithubRepository::parse("example/project").expect("valid repository")
-            ],
-            organization: None,
-        },
-        "Example".into(),
-    );
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: vec![GithubRepository::parse("example/project").expect("valid repository")],
+        organization: None,
+    });
     screen.compute(Rect::new(0, 0, 120, 32));
     screen.activate(GithubAction::Tab(GithubTab::PullRequests));
     for (index, request) in screen.drain_requests().into_iter().enumerate() {
@@ -113,6 +108,167 @@ fn render_text(screen: &mut GithubScreen, width: u16, height: u16) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+fn render_pane(screen: &mut GithubScreen, area: Rect) -> ratatui::buffer::Buffer {
+    screen.compute(area);
+    let mut terminal = Terminal::new(TestBackend::new(area.right() + 3, area.bottom() + 2))
+        .expect("test terminal");
+    terminal
+        .draw(|frame| {
+            let background = "x".repeat(frame.area().width as usize);
+            for y in 0..frame.area().height {
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(background.as_str()),
+                    Rect::new(0, y, frame.area().width, 1),
+                );
+            }
+            crate::ui::github::render(screen, &crate::app::state::Palette::catppuccin(), frame);
+        })
+        .expect("draw pane");
+    terminal.backend().buffer().clone()
+}
+
+fn text_row(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
+    for y in 0..buffer.area.height {
+        let line: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect();
+        if let Some(x) = line.find(text) {
+            return (x as u16, y);
+        }
+    }
+    panic!("missing visible text {text}");
+}
+
+#[test]
+fn pane_content_has_margins_group_gaps_and_clickable_metadata() {
+    for area in [Rect::new(9, 4, 100, 35), Rect::new(9, 4, 60, 25)] {
+        let mut screen = queued_screen();
+        screen.activate(GithubAction::Tab(GithubTab::Overview));
+        for request in screen.drain_requests() {
+            assert!(matches!(request, GithubRequest::Overview { .. }));
+            screen.track_request(80);
+        }
+        screen.apply(
+            80,
+            Ok(GithubResponse::Overview(Overview {
+                authored: Page {
+                    items: vec![summary(1)],
+                    next_cursor: None,
+                },
+                review_requested: Page {
+                    items: vec![summary(2)],
+                    next_cursor: None,
+                },
+                assigned_issues: Page {
+                    items: Vec::new(),
+                    next_cursor: None,
+                },
+            })),
+        );
+        let buffer = render_pane(&mut screen, area);
+        let (actions_x, actions_y) = text_row(&buffer, "Actions…");
+        let effects = screen.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: actions_x,
+            row: actions_y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(matches!(&effects[..], [GithubEffect::OpenPalette]));
+        assert!(screen
+            .contextual_actions()
+            .iter()
+            .any(|(action, _)| { *action == GithubAction::Tab(GithubTab::Actions) }));
+        let (title_x, title_y) = text_row(&buffer, "GitHub");
+        assert!(title_x > area.x && title_y > area.y);
+        let (_, actions_y) = text_row(&buffer, "Actions…");
+        let (heading_x, heading_y) = text_row(&buffer, "Authored pull requests");
+        assert!(heading_x > area.x && heading_y > actions_y + 1);
+        let (_, second_heading) = text_row(&buffer, "Review requested");
+        assert!((area.x..area.right()).all(|x| buffer[(x, second_heading - 1)].symbol() == " "));
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                if !contains(area, (x, y)) {
+                    assert_eq!(buffer[(x, y)].symbol(), "x", "outside pane at {x},{y}");
+                }
+            }
+        }
+        let (_, second_title) = text_row(&buffer, "Pull request 2");
+        screen.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: heading_x,
+            row: second_heading - 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(
+            screen.drain_requests().is_empty(),
+            "group gap must not open an item"
+        );
+        screen.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: heading_x,
+            row: second_title + 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(
+            matches!(&screen.drain_requests()[..], [GithubRequest::Details(key)] if key.number == 2)
+        );
+    }
+}
+
+#[test]
+fn keyboard_selection_scrolls_past_group_spacing() {
+    let mut screen = queued_screen();
+    for index in 3..24 {
+        screen
+            .entries
+            .push(Entry::Heading(format!("Group {index}")));
+        screen.entries.push(Entry::Item(summary(index)));
+    }
+    screen.entries_dirty = true;
+    let area = Rect::new(7, 3, 60, 25);
+    render_pane(&mut screen, area);
+    for _ in 0..22 {
+        screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+    let buffer = render_pane(&mut screen, area);
+    let (x, y) = text_row(&buffer, "Pull request 23");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(
+        matches!(&screen.drain_requests()[..], [GithubRequest::Details(key)] if key.number == 23)
+    );
+}
+
+#[test]
+fn narrow_pane_composer_and_confirmation_do_not_cover_neighbors() {
+    for area in [Rect::new(11, 5, 60, 25), Rect::new(11, 5, 40, 10)] {
+        let mut screen = loaded_screen();
+        for action in [GithubAction::Comment, GithubAction::CloseItem] {
+            screen.activate(action);
+            let buffer = render_pane(&mut screen, area);
+            for y in 0..buffer.area.height {
+                for x in 0..buffer.area.width {
+                    if !contains(area, (x, y)) {
+                        assert_eq!(buffer[(x, y)].symbol(), "x");
+                    }
+                }
+            }
+            let (x, y) = text_row(&buffer, "Cancel");
+            screen.handle_mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert!(screen.dialog.is_none());
+            assert!(screen.drain_requests().is_empty());
+        }
+    }
+}
 
 #[test]
 fn late_detail_response_cannot_replace_a_new_selection() {
@@ -139,19 +295,7 @@ fn late_detail_response_cannot_replace_a_new_selection() {
 #[test]
 fn multiline_comment_keeps_its_draft_after_failure_and_blocks_duplicate_submit() {
     let mut screen = loaded_screen();
-    let button = screen
-        .geometry
-        .controls
-        .iter()
-        .find(|control| control.action == GithubAction::Comment)
-        .expect("visible comment button")
-        .area;
-    screen.handle_mouse(MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: button.x,
-        row: button.y,
-        modifiers: KeyModifiers::NONE,
-    });
+    screen.activate(GithubAction::Comment);
     screen.paste("first line\nsecond line");
     screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     screen.paste("third line");
@@ -252,13 +396,10 @@ fn scoped_runs_stage_large_repository_sets_without_dropping_repositories() {
             GithubRepository::parse(&format!("example/project-{index}")).expect("valid repository")
         })
         .collect();
-    let mut screen = GithubScreen::new(
-        ResolvedGithubScope {
-            repositories: repositories.clone(),
-            organization: None,
-        },
-        "Example".into(),
-    );
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: repositories.clone(),
+        organization: None,
+    });
     screen.activate(GithubAction::Tab(GithubTab::Actions));
     let mut seen = std::collections::BTreeSet::new();
     let mut next_id = 1;

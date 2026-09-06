@@ -156,6 +156,7 @@ pub(crate) fn is_enabled() -> bool {
 
 pub(crate) fn paint_local_pane_graphics(
     app: &AppState,
+    obscured_pane: Option<PaneId>,
     graphics: &mut crate::app::pane_graphics::Runtime,
     terminal_runtimes: &TerminalRuntimeRegistry,
     cell_size: HostCellSize,
@@ -163,7 +164,14 @@ pub(crate) fn paint_local_pane_graphics(
     let cache = LOCAL_HOST_GRAPHICS.get_or_init(|| Mutex::new(HostGraphicsCache::default()));
     let mut bytes = Vec::new();
     if let Ok(mut cache) = cache.lock() {
-        bytes = encode_local_pane_graphics(app, graphics, terminal_runtimes, cell_size, &mut cache);
+        bytes = encode_local_pane_graphics(
+            app,
+            obscured_pane,
+            graphics,
+            terminal_runtimes,
+            cell_size,
+            &mut cache,
+        );
     }
     if bytes.is_empty() {
         return Ok(());
@@ -181,12 +189,13 @@ pub(crate) fn paint_local_pane_graphics(
 
 pub(crate) fn encode_local_pane_graphics(
     app: &AppState,
+    obscured_pane: Option<PaneId>,
     graphics: &mut crate::app::pane_graphics::Runtime,
     terminal_runtimes: &TerminalRuntimeRegistry,
     cell_size: HostCellSize,
     cache: &mut HostGraphicsCache,
 ) -> Vec<u8> {
-    let mode_ok = app.mode == Mode::Terminal;
+    let mode_ok = matches!(app.mode, Mode::Terminal | Mode::Github);
     let cell_ok = cell_size.is_known();
     tracing::debug!(
         mode_ok,
@@ -218,6 +227,7 @@ pub(crate) fn encode_local_pane_graphics(
         cell_size,
         &cache.images,
         blit_pane,
+        obscured_pane,
     );
     tracing::debug!(
         placements_collected = placements.len(),
@@ -253,7 +263,7 @@ pub(crate) fn encode_local_pane_graphics_for_view(
     cell_size: HostCellSize,
     cache: &mut HostGraphicsCache,
 ) -> Vec<u8> {
-    let mode_ok = view.mode == Mode::Terminal;
+    let mode_ok = matches!(view.mode, Mode::Terminal | Mode::Github);
     let cell_ok = cell_size.is_known();
     tracing::debug!(
         mode_ok,
@@ -614,6 +624,9 @@ fn collect_visible_placements_for_view(
         return Vec::new();
     };
     for info in &view.computed.pane_infos {
+        if view.github.is_some() && view.github_pane_id == Some(info.id) {
+            continue;
+        }
         if blit_pane.is_some_and(|pane_id| pane_id != info.id) {
             continue;
         }
@@ -673,6 +686,7 @@ fn collect_visible_placements(
     cell_size: HostCellSize,
     uploaded_images: &HashMap<u32, ImageSignature>,
     blit_pane: Option<PaneId>,
+    obscured_pane: Option<PaneId>,
 ) -> Vec<HostPlacement> {
     let ws_idx = match app.active {
         Some(idx) => idx,
@@ -699,6 +713,9 @@ fn collect_visible_placements(
     );
     let mut placements = Vec::new();
     for info in &app.view.pane_infos {
+        if obscured_pane == Some(info.id) {
+            continue;
+        }
         if blit_pane.is_some_and(|pane_id| pane_id != info.id) {
             continue;
         }

@@ -243,6 +243,9 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) -> Option<TerminalKeyTarget> {
+        if self.default_client_view.github.is_some() {
+            self.with_default_github_view(|_, _| {});
+        }
         if self.state.mode == Mode::Github
             || (self.state.mode == Mode::CommandPalette
                 && self.default_client_view.github.is_some())
@@ -377,6 +380,9 @@ impl App {
     }
 
     pub(crate) fn paste_into_active_text_input(&mut self, text: &str) -> bool {
+        if self.default_client_view.github.is_some() {
+            self.with_default_github_view(|_, _| {});
+        }
         if self.state.mode == Mode::Github {
             if let Some(screen) = self.default_client_view.github.as_mut() {
                 screen.paste(text);
@@ -498,12 +504,24 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.state.mode == Mode::Github
-            || (self.state.mode == Mode::CommandPalette
-                && self.default_client_view.github.is_some())
-        {
-            self.with_default_github_view(|app, view| app.handle_mouse_for_view(view, mouse));
-            return;
+        if self.default_client_view.github.is_some() {
+            let normalized = self.state.normalize_host_mouse_event(mouse);
+            let handled = self.with_default_github_view(|app, view| {
+                let owner = view.github_pane_id;
+                let handled = app.handle_github_mouse_for_view(view, normalized);
+                if handled && matches!(normalized.kind, MouseEventKind::Down(_)) {
+                    if let Some(pane_id) = owner {
+                        app.state.focus_pane(pane_id);
+                    }
+                }
+                handled
+            });
+            if handled {
+                return;
+            }
+            if self.state.mode == Mode::Github {
+                self.state.mode = Mode::Terminal;
+            }
         }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
