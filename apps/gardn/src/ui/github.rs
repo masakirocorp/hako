@@ -17,6 +17,7 @@ use crate::{
     app::state::Palette,
     github::{
         diff::{DiffCell, DiffLineKind, DiffMode, DiffRow, DiffSide},
+        rich_text::TextRole,
         screen::{
             queue_label, DetailTab, Dialog, Entry, Focus, GithubAction, GithubScreen, ListRow,
             TextBuffer,
@@ -344,6 +345,7 @@ fn render_detail(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                 .and_then(|row| screen.detail_rows[row].target)
         })
         .flatten();
+    let hovered_link = screen.hovered_link();
     for (row, index) in viewport.visible_range().enumerate() {
         let line = &screen.detail_rows[index];
         let selected = line.target.is_some() && line.target == screen.selected_row;
@@ -360,8 +362,44 @@ fn render_detail(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                     palette.panel_bg
                 },
             );
+        let spans = line.spans.iter().enumerate().map(|(span_index, span)| {
+            let color = match span.role {
+                TextRole::Body | TextRole::Title => palette.text,
+                TextRole::Muted => palette.subtext0,
+                TextRole::Heading => palette.accent,
+                TextRole::Code => palette.mauve,
+                TextRole::Link => palette.blue,
+                TextRole::Success => palette.green,
+                TextRole::Warning => palette.yellow,
+                TextRole::Danger => palette.red,
+            };
+            let mut span_style = style
+                .fg(if line.failure { palette.red } else { color })
+                .add_modifier(span.modifiers);
+            if matches!(span.role, TextRole::Title | TextRole::Heading) {
+                span_style = span_style.add_modifier(Modifier::BOLD);
+            }
+            if span.role == TextRole::Code
+                && !(selected || line.target.is_some() && line.target == hovered)
+            {
+                span_style = span_style.bg(palette.surface0);
+            }
+            if span.link.is_some() {
+                span_style = span_style
+                    .fg(palette.blue)
+                    .add_modifier(Modifier::UNDERLINED);
+                if hovered_link == Some((index, span_index))
+                    || screen.dialog.is_none()
+                        && screen.focus == Focus::Detail
+                        && screen.selected_link == Some((index, span_index))
+                {
+                    span_style = span_style.bg(palette.surface1);
+                }
+            }
+            Span::styled(span.text.as_str(), span_style)
+        });
         frame.render_widget(
-            Paragraph::new(line.text.as_str()).style(style),
+            Paragraph::new(Line::from(spans.collect::<Vec<_>>())).style(style),
             Rect::new(
                 scroll.body.x,
                 scroll.body.y + row as u16,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::github::rich_text::{self, TextRole};
 
 impl GithubScreen {
     pub fn compute(&mut self, area: Rect) {
@@ -302,6 +303,7 @@ impl GithubScreen {
         self.geometry = geometry;
     }
     pub(super) fn rebuild_detail_rows(&mut self, width: usize) {
+        self.selected_link = None;
         let mut rows = Vec::new();
         match &self.detail {
             Some(Detail::Repository(repo)) => {
@@ -319,58 +321,133 @@ impl GithubScreen {
             }
             Some(Detail::Item(item)) => match self.detail_tab {
                 DetailTab::Description => {
-                    append_rows(
-                        &mut rows,
+                    let width = width.min(80);
+                    let mut append =
+                        |text: &str, role| {
+                            rows.extend(rich_text::plain(text, role, width).into_iter().map(
+                                |spans| TextRow {
+                                    spans,
+                                    target: None,
+                                    failure: false,
+                                },
+                            ));
+                        };
+                    append(&item.summary.title, TextRole::Title);
+                    append(
                         &format!(
-                            "{} #{}\n{}\n{}{} · @{}",
+                            "{} #{} · @{}",
                             item.summary.key.repository,
                             item.summary.key.number,
-                            item.summary.title,
-                            item.summary.state,
+                            item.summary.author.as_deref().unwrap_or("unknown"),
+                        ),
+                        TextRole::Muted,
+                    );
+                    append("", TextRole::Body);
+                    let (state, role) = description_status(&item.summary.state);
+                    append(
+                        &format!(
+                            "{state}{}",
                             if item.summary.is_draft {
                                 " · Draft"
                             } else {
                                 ""
                             },
-                            item.summary.author.as_deref().unwrap_or("unknown")
                         ),
-                        None,
-                        false,
-                        width,
-                    );
-                    append_rows(
-                        &mut rows,
-                        &format!(
-                            "Labels: {}\nAssignees: {}",
-                            item.labels
-                                .iter()
-                                .map(|label| label.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            item.assignees
-                                .iter()
-                                .map(|user| user.login.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        None,
-                        false,
-                        width,
+                        if item.summary.is_draft {
+                            TextRole::Muted
+                        } else {
+                            role
+                        },
                     );
                     if let Some(merge) = &item.merge {
-                        append_rows(&mut rows, &format!("{} → {}  +{} −{}  {} files\nReview {} · Merge {} · Queue {} · Auto-merge {}\nHead {}", merge.head_branch, merge.base_branch, item.additions.unwrap_or(0), item.deletions.unwrap_or(0), item.changed_files.unwrap_or(0), merge.review_decision.as_deref().unwrap_or("none"), merge.merge_state_status, if merge.queue_enabled { "enabled" } else { "off" }, if merge.auto_merge_enabled { "enabled" } else { "off" }, merge.head_sha), None, false, width);
+                        if let Some(review) =
+                            merge.review_decision.as_deref().filter(|s| !s.is_empty())
+                        {
+                            let (label, role) = description_status(review);
+                            append(&format!("Review · {label}"), role);
+                        }
+                        let (label, role) = description_status(&merge.merge_state_status);
+                        append(&format!("Merge · {label}"), role);
+                        if merge.queue_enabled || merge.auto_merge_enabled {
+                            append(
+                                match (merge.queue_enabled, merge.auto_merge_enabled) {
+                                    (true, true) => "Merge queue enabled · Auto-merge enabled",
+                                    (true, false) => "Merge queue enabled",
+                                    _ => "Auto-merge enabled",
+                                },
+                                TextRole::Muted,
+                            );
+                        }
+                        append("", TextRole::Body);
+                        append(
+                            &format!("{} → {}", merge.head_branch, merge.base_branch),
+                            TextRole::Code,
+                        );
+                        let mut changes = Vec::new();
+                        if let Some(files) = item.changed_files {
+                            changes.push(format!(
+                                "{files} {}",
+                                if files == 1 { "file" } else { "files" }
+                            ));
+                        }
+                        if let Some(additions) = item.additions {
+                            changes.push(format!("+{additions}"));
+                        }
+                        if let Some(deletions) = item.deletions {
+                            changes.push(format!("−{deletions}"));
+                        }
+                        if !changes.is_empty() {
+                            append(&changes.join(" · "), TextRole::Muted);
+                        }
+                        if !merge.head_sha.is_empty() {
+                            append(
+                                &format!(
+                                    "Head {}",
+                                    merge.head_sha.chars().take(7).collect::<String>()
+                                ),
+                                TextRole::Muted,
+                            );
+                        }
                     }
-                    append_rows(&mut rows, "", None, false, width);
-                    append_rows(
-                        &mut rows,
-                        item.body
-                            .as_deref()
-                            .filter(|body| !body.is_empty())
-                            .unwrap_or("No description."),
-                        None,
-                        false,
-                        width,
-                    );
+                    if !item.labels.is_empty() {
+                        append(
+                            &format!(
+                                "Labels · {}",
+                                item.labels
+                                    .iter()
+                                    .map(|label| label.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            ),
+                            TextRole::Muted,
+                        );
+                    }
+                    if !item.assignees.is_empty() {
+                        append(
+                            &format!(
+                                "Assignees · {}",
+                                item.assignees
+                                    .iter()
+                                    .map(|user| format!("@{}", user.login))
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            ),
+                            TextRole::Muted,
+                        );
+                    }
+                    append("", TextRole::Body);
+                    append("Description", TextRole::Heading);
+                    append("", TextRole::Body);
+                    let body = item.body.as_deref().filter(|body| !body.trim().is_empty());
+                    let lines = match body {
+                        Some(body) => rich_text::markdown(body, width),
+                        None => rich_text::plain("No description.", TextRole::Muted, width),
+                    };
+                    rows.extend(lines.into_iter().map(|spans| TextRow {
+                        spans,
+                        target: None,
+                        failure: false,
+                    }));
                 }
                 DetailTab::Conversation => {
                     let mut comments: Vec<_> =
@@ -567,5 +644,25 @@ impl GithubScreen {
             None => {}
         }
         self.detail_rows = rows;
+    }
+}
+
+fn description_status(status: &str) -> (&str, TextRole) {
+    match status {
+        "OPEN" | "open" => ("Open", TextRole::Success),
+        "CLOSED" | "closed" => ("Closed", TextRole::Muted),
+        "MERGED" | "merged" => ("Merged", TextRole::Success),
+        "APPROVED" => ("Approved", TextRole::Success),
+        "CHANGES_REQUESTED" => ("Changes requested", TextRole::Warning),
+        "REVIEW_REQUIRED" => ("Review required", TextRole::Warning),
+        "CLEAN" => ("Ready to merge", TextRole::Success),
+        "BLOCKED" => ("Blocked", TextRole::Warning),
+        "BEHIND" => ("Branch out of date", TextRole::Warning),
+        "DIRTY" => ("Conflicts", TextRole::Danger),
+        "DRAFT" => ("Draft", TextRole::Muted),
+        "HAS_HOOKS" => ("Merge hooks present", TextRole::Body),
+        "UNSTABLE" => ("Checks not passing", TextRole::Warning),
+        "UNKNOWN" => ("Unknown", TextRole::Muted),
+        _ => (status, TextRole::Body),
     }
 }

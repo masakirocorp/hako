@@ -2,6 +2,11 @@ use super::*;
 
 impl GithubScreen {
     pub(super) fn current_url(&self) -> Option<String> {
+        if self.focus == Focus::Detail {
+            if let Some(url) = self.selected_link.and_then(|key| self.link_url(key)) {
+                return Some(url.to_owned());
+            }
+        }
         if let Some((comment, _)) = self.selected_comment() {
             return Some(comment.html_url.clone());
         }

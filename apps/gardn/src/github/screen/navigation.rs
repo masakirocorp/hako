@@ -44,6 +44,7 @@ impl GithubScreen {
         self.detail_rows.clear();
         self.detail_scroll = 0;
         self.selected_row = None;
+        self.selected_link = None;
         self.merge_repository = None;
         self.labels.clear();
         self.rows_dirty = true;

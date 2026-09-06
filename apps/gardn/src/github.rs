@@ -1,5 +1,6 @@
 pub(crate) mod diff;
 pub(crate) mod domain;
+pub(crate) mod rich_text;
 pub(crate) mod runtime;
 pub(crate) mod screen;
 pub(crate) mod service;

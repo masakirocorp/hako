@@ -25,6 +25,7 @@ libc = "0.2"
 gardn-local-api = { path = "../../crates/gardn-local-api" }
 portable-pty = "=0.9.0"
 png = "0.18"
+pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = { version = "0.30.2", default-features = false, features = [
     "crossterm",
     "layout-cache",
@@ -42,6 +43,7 @@ tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "ti
 toml = "1.1.4"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
 [build-dependencies]

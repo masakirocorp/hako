@@ -170,7 +170,7 @@ pub enum RowTarget {
 }
 #[derive(Debug, Clone)]
 pub struct TextRow {
-    pub text: String,
+    pub spans: super::rich_text::RichLine,
     pub target: Option<RowTarget>,
     pub failure: bool,
 }
@@ -400,6 +400,7 @@ pub struct GithubScreen {
     pub detail_tab: DetailTab,
     pub detail_rows: Vec<TextRow>,
     pub selected_row: Option<RowTarget>,
+    pub selected_link: Option<(usize, usize)>,
     pub focus: Focus,
     pub control_focus: usize,
     pub geometry: Geometry,
@@ -456,6 +457,7 @@ impl GithubScreen {
             detail_tab: DetailTab::Description,
             detail_rows: Vec::new(),
             selected_row: None,
+            selected_link: None,
             focus: Focus::List,
             control_focus: 0,
             geometry: Geometry::default(),
@@ -611,35 +613,15 @@ fn append_rows(
     failure: bool,
     width: usize,
 ) {
-    for line in text.split('\n') {
-        let mut chunk = String::new();
-        let mut columns = 0;
-        for c in line.chars() {
-            let c = if c == '\t' {
-                ' '
-            } else if c.is_control() {
-                continue;
-            } else {
-                c
-            };
-            let next = c.width().unwrap_or(0);
-            if columns + next > width && !chunk.is_empty() {
-                rows.push(TextRow {
-                    text: std::mem::take(&mut chunk),
-                    target,
-                    failure,
-                });
-                columns = 0;
-            }
-            chunk.push(c);
-            columns += next;
-        }
-        rows.push(TextRow {
-            text: chunk,
-            target,
-            failure,
-        });
-    }
+    rows.extend(
+        super::rich_text::plain(text, super::rich_text::TextRole::Body, width)
+            .into_iter()
+            .map(|spans| TextRow {
+                spans,
+                target,
+                failure,
+            }),
+    );
 }
 fn duration(start: Option<&str>, end: Option<&str>) -> String {
     let Some(start) = start.and_then(timestamp_seconds) else {

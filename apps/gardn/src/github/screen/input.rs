@@ -36,6 +36,79 @@ impl GithubScreen {
         ModalListViewport::new(total, area.height as usize, scroll).hit_visual_row(area, x, y)
     }
 
+    pub(super) fn link_url(&self, (row, span): (usize, usize)) -> Option<&str> {
+        let url = self
+            .detail_rows
+            .get(row)?
+            .spans
+            .get(span)?
+            .link
+            .as_deref()?;
+        if url.chars().any(char::is_control) {
+            return None;
+        }
+        crate::app::actions::safe_web_url(url)
+    }
+
+    pub fn hovered_link(&self) -> Option<(usize, usize)> {
+        if self.dialog.is_some() || self.detail_tab == DetailTab::Diff {
+            return None;
+        }
+        let area = self.geometry.detail;
+        let row = self.hovered_row(area, self.detail_rows.len(), self.detail_scroll)?;
+        let column = usize::from(self.mouse_position?.0.saturating_sub(area.x));
+        let mut end = 0;
+        for (span, content) in self.detail_rows[row].spans.iter().enumerate() {
+            end += UnicodeWidthStr::width(content.text.as_str());
+            if column < end {
+                return self.link_url((row, span)).map(|_| (row, span));
+            }
+        }
+        None
+    }
+
+    fn move_link_focus(&mut self, forward: bool) -> bool {
+        if self.detail_tab == DetailTab::Diff {
+            return false;
+        }
+        let mut previous_url = None;
+        let mut links = self
+            .detail_rows
+            .iter()
+            .enumerate()
+            .flat_map(|(row, line)| {
+                line.spans
+                    .iter()
+                    .enumerate()
+                    .map(move |(span, _)| (row, span))
+            })
+            .filter(|&key| {
+                let url = self.link_url(key);
+                let distinct = url.is_some() && url != previous_url;
+                previous_url = url;
+                distinct
+            });
+        let next = if forward {
+            links.find(|key| self.selected_link.is_none_or(|current| *key > current))
+        } else {
+            links
+                .filter(|key| self.selected_link.is_none_or(|current| *key < current))
+                .last()
+        };
+        let Some(key) = next else {
+            self.selected_link = None;
+            return false;
+        };
+        self.selected_link = Some(key);
+        self.detail_scroll = ModalListViewport::new(
+            self.detail_rows.len(),
+            self.geometry.detail.height as usize,
+            self.detail_scroll,
+        )
+        .ensure_visible(key.0, None);
+        true
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Vec<GithubEffect> {
         if key.kind == KeyEventKind::Release {
             return Vec::new();
@@ -142,6 +215,11 @@ impl GithubScreen {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
             return self.activate(GithubAction::Palette);
         }
+        if self.focus == Focus::Detail && key.code == KeyCode::Enter {
+            if let Some(url) = self.selected_link.and_then(|key| self.link_url(key)) {
+                return vec![GithubEffect::OpenUrl(url.to_owned())];
+            }
+        }
         let action = match key.code {
             KeyCode::Esc => Some(
                 if self.detail.is_some()
@@ -203,21 +281,36 @@ impl GithubScreen {
         }
         match key.code {
             KeyCode::Tab => {
+                if self.focus == Focus::Detail && self.move_link_focus(true) {
+                    self.compute(self.geometry.area);
+                    return Vec::new();
+                }
                 self.focus = match self.focus {
                     Focus::List if self.detail.is_some() => Focus::Detail,
                     Focus::List | Focus::Detail => Focus::Controls,
                     Focus::Controls => Focus::List,
                 };
+                if self.focus == Focus::Detail {
+                    self.move_link_focus(true);
+                }
             }
             KeyCode::BackTab => {
+                if self.focus == Focus::Detail && self.move_link_focus(false) {
+                    self.compute(self.geometry.area);
+                    return Vec::new();
+                }
                 self.focus = match self.focus {
                     Focus::List => Focus::Controls,
                     Focus::Detail => Focus::List,
                     Focus::Controls if self.detail.is_some() => Focus::Detail,
                     Focus::Controls => Focus::List,
                 };
+                if self.focus == Focus::Detail {
+                    self.move_link_focus(false);
+                }
             }
             KeyCode::Up | KeyCode::Down | KeyCode::Char('j' | 'k') => {
+                self.selected_link = None;
                 let forward = matches!(key.code, KeyCode::Down | KeyCode::Char('j'));
                 if self.focus == Focus::Controls {
                     let count = self.geometry.controls.len();
@@ -613,6 +706,10 @@ impl GithubScreen {
                         );
                         self.diff_drag = true;
                     } else {
+                        self.selected_link = self.hovered_link();
+                        if let Some(url) = self.selected_link.and_then(|key| self.link_url(key)) {
+                            return vec![GithubEffect::OpenUrl(url.to_owned())];
+                        }
                         self.selected_row = self.detail_rows.get(row).and_then(|row| row.target);
                     }
                 }

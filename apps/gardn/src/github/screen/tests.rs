@@ -90,6 +90,18 @@ fn loaded_screen() -> GithubScreen {
     }
     screen
 }
+fn description_screen(item: Box<ItemDetails>) -> GithubScreen {
+    let mut screen = queued_screen();
+    screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(
+        &screen.drain_requests()[..],
+        [GithubRequest::Details(_)]
+    ));
+    screen.track_request(10);
+    screen.apply(10, Ok(GithubResponse::Details(item)));
+    screen
+}
+
 fn render_text(screen: &mut GithubScreen, width: u16, height: u16) -> String {
     screen.compute(Rect::new(0, 0, width, height));
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
@@ -137,6 +149,80 @@ fn text_row(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
         }
     }
     panic!("missing visible text {text}");
+}
+
+#[test]
+fn description_separates_title_context_and_formatted_markdown() {
+    let mut item = details(1);
+    item.summary.title = "Complete the public API documentation".into();
+    item.body = Some("## Pull Request Details\n\nDocuments `key-info` for **published endpoints**.\n\n### Dev checklist\n\n- [x] Reviewed the code\n- [ ] Verify the build\n\n[Ticket][ticket]\n\n[ticket]: https://example.com/TWR-849?token=reference-only".into());
+    let mut screen = description_screen(item);
+    let area = Rect::new(9, 4, 100, 45);
+    let buffer = render_pane(&mut screen, area);
+    let title = text_row(&buffer, "Complete the public API");
+    let context = text_row(&buffer, "example/project #1");
+    let heading = text_row(&buffer, "Pull Request Details");
+    let code = text_row(&buffer, "key-info");
+    let prose = text_row(&buffer, "Documents");
+    assert!(buffer[title]
+        .modifier
+        .contains(ratatui::style::Modifier::BOLD));
+    assert!(buffer[heading]
+        .modifier
+        .contains(ratatui::style::Modifier::BOLD));
+    assert_ne!(buffer[title].fg, buffer[context].fg);
+    assert_ne!(buffer[code].bg, buffer[prose].bg);
+    let visible: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(!visible.contains("Labels:"));
+    assert!(!visible.contains("Assignees:"));
+    assert!(!visible.contains("## Pull Request Details"));
+    assert!(!visible.contains("reference-only"));
+    assert!(!visible.contains(&"a".repeat(40)));
+    text_row(&buffer, "Reviewed the code");
+    text_row(&buffer, "Verify the build");
+    text_row(&buffer, "Ticket");
+}
+
+#[test]
+fn formatted_links_support_pointer_and_keyboard_without_opening_unsafe_schemes() {
+    let mut item = details(1);
+    item.body = Some("[Ticket][ticket]\n\n[Unsafe](javascript:alert(1))\n\n[Guide](https://example.com/guide)\n\n[ticket]: https://example.com/TWR-849".into());
+    let mut screen = description_screen(item);
+    let area = Rect::new(9, 4, 100, 45);
+    let buffer = render_pane(&mut screen, area);
+    let ticket = text_row(&buffer, "Ticket");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: ticket.0,
+        row: ticket.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    let hovered = render_pane(&mut screen, area);
+    assert_ne!(hovered[ticket].bg, buffer[ticket].bg);
+    let effects = screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: ticket.0,
+        row: ticket.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(
+        matches!(&effects[..], [GithubEffect::OpenUrl(url)] if url == "https://example.com/TWR-849")
+    );
+    screen.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    let effects = screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        matches!(&effects[..], [GithubEffect::OpenUrl(url)] if url == "https://example.com/guide")
+    );
+    let unsafe_link = text_row(&render_pane(&mut screen, area), "Unsafe");
+    let effects = screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: unsafe_link.0,
+        row: unsafe_link.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(!effects
+        .iter()
+        .any(|effect| matches!(effect, GithubEffect::OpenUrl(_))));
 }
 
 #[test]
