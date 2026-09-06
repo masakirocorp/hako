@@ -218,12 +218,13 @@ impl GithubScreen {
                     | A::MergeAuto(_)
                     | A::DisableAuto
                     | A::Palette
+                    | A::ChooseAction
             )
         {
             return Vec::new();
         }
-        if action != A::ChooseQueue {
-            self.queue_menu = None;
+        if !matches!(action, A::ChooseQueue | A::ChooseAction) {
+            self.menu = None;
         }
         let previous_dialog = self.dialog.as_ref().map(std::mem::discriminant);
         match action {
@@ -254,17 +255,44 @@ impl GithubScreen {
                 self.focus = Focus::List;
                 self.refresh();
             }
-            A::ChooseQueue => {
-                if self.queue_menu.is_some() {
-                    self.queue_menu = None;
-                } else if let Some(index) = self
-                    .available_queues()
-                    .iter()
-                    .position(|&queue| queue == self.queue)
+            A::ChooseQueue | A::ChooseAction => {
+                if self
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.trigger == action)
                 {
-                    let mut menu = ModalListState::hidden(index);
-                    menu.show();
-                    self.queue_menu = Some(menu);
+                    self.menu = None;
+                } else {
+                    let items: Vec<_> = if action == A::ChooseQueue {
+                        self.available_queues()
+                            .iter()
+                            .map(|&queue| (A::Queue(queue), queue_label(queue).into()))
+                            .collect()
+                    } else {
+                        self.contextual_actions()
+                            .into_iter()
+                            .filter(|(action, _)| {
+                                !matches!(
+                                    action,
+                                    A::Tab(_) | A::Queue(_) | A::Detail(_) | A::SelectFile(_)
+                                )
+                            })
+                            .collect()
+                    };
+                    if !items.is_empty() {
+                        let selected = items
+                            .iter()
+                            .position(|(action, _)| *action == A::Queue(self.queue))
+                            .unwrap_or(0);
+                        let mut list = ModalListState::hidden(selected);
+                        list.show();
+                        self.menu = Some(LocalMenu {
+                            trigger: action,
+                            items,
+                            list,
+                            scroll: 0,
+                        });
+                    }
                 }
             }
             A::Queue(queue) => {

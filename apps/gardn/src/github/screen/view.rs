@@ -85,7 +85,7 @@ impl GithubScreen {
                 format!("Queue: {} ▾", queue_label(self.queue)),
             ));
         }
-        actions.push((A::Palette, "Actions…".into()));
+        actions.push((A::ChooseAction, "Actions…".into()));
         if has_detail {
             actions.push((A::Back, "Back".into()));
             if self.item().is_some() {
@@ -114,30 +114,6 @@ impl GithubScreen {
             row(if roomy { 5 } else { 2 }),
             &actions,
         );
-        if self.queue_menu.is_some() {
-            if let Some(trigger) = geometry
-                .controls
-                .iter()
-                .find(|control| control.action == A::ChooseQueue)
-            {
-                let width = 24.min(area.width);
-                let height = (self.available_queues().len() as u16 + 2).min(area.height);
-                let below = trigger.area.bottom();
-                let y = if below + height <= area.bottom() {
-                    below
-                } else {
-                    trigger.area.y.saturating_sub(height).max(area.y)
-                };
-                geometry.queue_menu = Rect::new(
-                    trigger.area.x.min(area.right().saturating_sub(width)),
-                    y,
-                    width,
-                    height,
-                );
-            } else {
-                self.queue_menu = None;
-            }
-        }
         let content = stack.content;
         if has_detail && area.width >= 110 {
             let list_width = (area.width / 3).min(45);
@@ -269,7 +245,7 @@ impl GithubScreen {
             let mut actions = vec![(A::Cancel, "Cancel".into())];
             match &self.dialog {
                 Some(Dialog::Merge) => {
-                    actions.push((A::Palette, "Actions…".into()));
+                    actions.push((A::ChooseAction, "Actions…".into()));
                     actions.extend(self.merge_actions());
                 }
                 Some(Dialog::Labels { .. }) => {
@@ -296,6 +272,50 @@ impl GithubScreen {
                 ),
                 &actions,
             );
+        }
+        if let Some(menu) = &mut self.menu {
+            if let Some(trigger) = geometry
+                .controls
+                .iter()
+                .find(|control| control.action == menu.trigger)
+            {
+                let width = menu
+                    .items
+                    .iter()
+                    .map(|(_, label)| UnicodeWidthStr::width(label.as_str()) + 5)
+                    .max()
+                    .unwrap_or(24)
+                    .max(24)
+                    .min(usize::from(area.width)) as u16;
+                let below = trigger.area.bottom();
+                let below_height = area.bottom().saturating_sub(below);
+                let above_height = trigger.area.y.saturating_sub(area.y);
+                let desired = menu
+                    .items
+                    .len()
+                    .saturating_add(2)
+                    .min(usize::from(u16::MAX)) as u16;
+                let (y, height) = if desired <= below_height || below_height >= above_height {
+                    (below, desired.min(below_height))
+                } else {
+                    let height = desired.min(above_height);
+                    (trigger.area.y.saturating_sub(height), height)
+                };
+                geometry.menu = Rect::new(
+                    trigger.area.x.min(area.right().saturating_sub(width)),
+                    y,
+                    width,
+                    height,
+                );
+                menu.scroll = ModalListViewport::new(
+                    menu.items.len(),
+                    inset(geometry.menu).height as usize,
+                    menu.scroll,
+                )
+                .ensure_visible(menu.list.selected, None);
+            } else {
+                self.menu = None;
+            }
         }
         self.control_focus = self
             .control_focus

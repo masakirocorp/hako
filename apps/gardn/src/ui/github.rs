@@ -19,8 +19,7 @@ use crate::{
         diff::{DiffCell, DiffLineKind, DiffMode, DiffRow, DiffSide},
         rich_text::TextRole,
         screen::{
-            queue_label, DetailTab, Dialog, Entry, Focus, GithubAction, GithubScreen, ListRow,
-            TextBuffer,
+            DetailTab, Dialog, Entry, Focus, GithubAction, GithubScreen, ListRow, TextBuffer,
         },
     },
 };
@@ -125,12 +124,13 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             notice.clone()
         } else if !screen.filter.is_empty() {
             format!(
-                "Filter loaded results: {} · {} matches · Actions… contains all commands",
+                "Filter loaded results: {} · {} matches · Actions… for this view",
                 screen.filter,
                 screen.visible_entries().len()
             )
         } else {
-            "Tab focus · ↑↓ select/scroll · Enter open · ? all actions · Esc back/close".to_owned()
+            "Tab focus · ↑↓ select/scroll · Enter open · Ctrl+P command palette · Esc back/close"
+                .to_owned()
         };
         frame.render_widget(
             Paragraph::new(status)
@@ -143,28 +143,26 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             geometry.status,
         );
     }
-    render_queue_menu(screen, palette, frame);
+    render_menu(screen, palette, frame);
 }
 
-fn render_queue_menu(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
-    let Some(menu) = &screen.queue_menu else {
+fn render_menu(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
+    let Some(menu) = &screen.menu else {
         return;
     };
     let Some(inner) = render_panel_shell(
         frame,
-        screen.geometry.queue_menu,
+        screen.geometry.menu,
         palette.accent,
         palette.panel_bg,
     ) else {
         return;
     };
-    for (index, &queue) in screen
-        .available_queues()
-        .iter()
-        .take(inner.height as usize)
-        .enumerate()
-    {
-        let style = if menu.visible() == Some(index) {
+    let viewport = ModalListViewport::new(menu.items.len(), inner.height as usize, menu.scroll);
+    let scroll = viewport.scroll_area(inner);
+    for (row, index) in viewport.visible_range().enumerate() {
+        let (action, label) = &menu.items[index];
+        let style = if menu.list.visible() == Some(index) {
             Style::default()
                 .fg(panel_contrast_fg(palette))
                 .bg(palette.accent)
@@ -174,11 +172,30 @@ fn render_queue_menu(screen: &GithubScreen, palette: &Palette, frame: &mut Frame
         frame.render_widget(
             Paragraph::new(format!(
                 " {} {}",
-                if screen.queue == queue { "✓" } else { " " },
-                queue_label(queue)
+                if *action == GithubAction::Queue(screen.queue) {
+                    "✓"
+                } else {
+                    " "
+                },
+                label
             ))
             .style(style),
-            Rect::new(inner.x, inner.y + index as u16, inner.width, 1),
+            Rect::new(
+                scroll.body.x,
+                scroll.body.y + row as u16,
+                scroll.body.width,
+                1,
+            ),
+        );
+    }
+    if let Some(track) = scroll.track {
+        render_scrollbar(
+            frame,
+            viewport.metrics(),
+            track,
+            palette.surface1,
+            palette.accent,
+            "▐",
         );
     }
 }

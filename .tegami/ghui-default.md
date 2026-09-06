@@ -11,6 +11,8 @@ Each Space can use discovered GitHub repositories, exact selected repositories, 
 
 Queue filters open a local menu containing only choices supported by the current tab, not the command palette. The active filter stays visible on the control. Controls, clickable rows, diff lines, and scrollbars show hover feedback without changing the selected item or keyboard focus.
 
+Actions… opens a local context menu instead of the global command palette. It offers commands for the current GitHub view or selected item, supports mouse and keyboard selection, and scrolls in compact panes. Ctrl+P keeps access to the global palette.
+
 Pull request and issue descriptions now separate the title, status, and secondary metadata from the body. Markdown headings, lists, checklists, emphasis, and code render with distinct styling. Links show readable labels and support mouse or keyboard activation. Empty metadata is hidden, and commit hashes use seven characters.
 
 Native GitHub retains Overview, pull request and issue conversations, comments and edits to your own comments, labels, draft state, and close actions. Diffs support split and unified views, wrapping, whitespace controls, file navigation, and inline range reviews. Safe merge, auto-merge, queue actions, and scoped Actions runs with jobs, steps, and log links remain available. Filters apply to loaded results, and More loads another page.

@@ -66,6 +66,7 @@ pub enum GithubAction {
     Tab(GithubTab),
     Queue(Queue),
     ChooseQueue,
+    ChooseAction,
     Runs(RunFilter),
     Refresh,
     More,
@@ -194,6 +195,13 @@ impl ListRow {
         }
     }
 }
+#[derive(Debug, Clone)]
+pub struct LocalMenu {
+    pub trigger: GithubAction,
+    pub items: Vec<(GithubAction, String)>,
+    pub list: ModalListState,
+    pub scroll: usize,
+}
 #[derive(Debug, Clone, Default)]
 pub struct Geometry {
     pub area: Rect,
@@ -207,7 +215,7 @@ pub struct Geometry {
     pub modal: Rect,
     pub input: Rect,
     pub files: Rect,
-    pub queue_menu: Rect,
+    pub menu: Rect,
 }
 #[derive(Debug, Clone)]
 pub struct TextBuffer {
@@ -405,7 +413,7 @@ pub struct GithubScreen {
     pub control_focus: usize,
     pub geometry: Geometry,
     pub dialog: Option<Dialog>,
-    pub queue_menu: Option<ModalListState>,
+    pub menu: Option<LocalMenu>,
     mouse_position: Option<(u16, u16)>,
     pub error: Option<String>,
     pub notice: Option<String>,
@@ -462,7 +470,7 @@ impl GithubScreen {
             control_focus: 0,
             geometry: Geometry::default(),
             dialog: None,
-            queue_menu: None,
+            menu: None,
             mouse_position: None,
             error: None,
             notice: None,

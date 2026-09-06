@@ -335,11 +335,12 @@ fn pane_content_has_margins_group_gaps_and_clickable_metadata() {
             row: actions_y,
             modifiers: KeyModifiers::NONE,
         });
-        assert!(matches!(&effects[..], [GithubEffect::OpenPalette]));
-        assert!(screen
-            .contextual_actions()
+        assert!(!effects
             .iter()
-            .any(|(action, _)| { *action == GithubAction::Tab(GithubTab::Actions) }));
+            .any(|effect| matches!(effect, GithubEffect::OpenPalette)));
+        let menu = render_pane(&mut screen, area);
+        text_row(&menu, "Filter loaded results");
+        screen.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         let (title_x, title_y) = text_row(&buffer, "GitHub");
         assert!(title_x > area.x && title_y > area.y);
         let (_, actions_y) = text_row(&buffer, "Actions…");
@@ -484,6 +485,73 @@ fn multiline_comment_keeps_its_draft_after_failure_and_blocks_duplicate_submit()
 }
 
 #[test]
+fn actions_menu_opens_contextual_commands_without_the_global_palette() {
+    let mut screen = loaded_screen();
+    let area = Rect::new(9, 4, 100, 45);
+    let buffer = render_pane(&mut screen, area);
+    let (x, y) = text_row(&buffer, "Actions…");
+    let effects = screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(!effects
+        .iter()
+        .any(|effect| matches!(effect, GithubEffect::OpenPalette)));
+    let buffer = render_pane(&mut screen, area);
+    text_row(&buffer, "Write comment");
+    text_row(&buffer, "Merge options");
+    let (x, y) = text_row(&buffer, "Open in browser");
+    let effects = screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(
+        matches!(&effects[..], [GithubEffect::OpenUrl(url)] if url == "https://github.com/example/project/pull/1")
+    );
+    let text = render_text(&mut screen, 100, 45);
+    assert!(!text.contains("Write comment"));
+    let effects = screen.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+    assert!(matches!(&effects[..], [GithubEffect::OpenPalette]));
+}
+
+#[test]
+fn actions_menu_keyboard_selection_and_escape_stay_in_github() {
+    let mut screen = loaded_screen();
+    let area = Rect::new(0, 0, 100, 40);
+    let buffer = render_pane(&mut screen, area);
+    let (x, y) = text_row(&buffer, "Actions…");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(screen.dialog, Some(Dialog::Filter(_))));
+    screen.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let buffer = render_pane(&mut screen, area);
+    let (x, y) = text_row(&buffer, "Actions…");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    let effects = screen.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!effects
+        .iter()
+        .any(|effect| matches!(effect, GithubEffect::Close | GithubEffect::OpenPalette)));
+    let text = render_text(&mut screen, 100, 40);
+    assert!(text.contains("Body for pull request 1"));
+    assert!(!text.contains("Write comment"));
+}
+
+#[test]
 fn compact_diff_keeps_content_and_all_actions_reachable() {
     let mut screen = loaded_screen();
     screen.activate(GithubAction::Detail(DetailTab::Diff));
@@ -504,24 +572,39 @@ fn compact_diff_keeps_content_and_all_actions_reachable() {
     let text = render_text(&mut screen, 40, 10);
     assert!(text.contains("old value"));
     assert!(text.contains("new value"));
-    let button = screen
-        .geometry
-        .controls
-        .iter()
-        .find(|control| control.action == GithubAction::Palette)
-        .expect("visible actions button")
-        .area;
+    let buffer = render_pane(&mut screen, Rect::new(0, 0, 40, 10));
+    let (x, y) = text_row(&buffer, "Actions…");
     let effects = screen.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
-        column: button.x,
-        row: button.y,
+        column: x,
+        row: y,
         modifiers: KeyModifiers::NONE,
     });
-    assert!(matches!(&effects[..], [GithubEffect::OpenPalette]));
-    assert!(screen
-        .contextual_actions()
+    assert!(!effects
         .iter()
-        .any(|(action, _)| *action == GithubAction::RequestChanges));
+        .any(|effect| matches!(effect, GithubEffect::OpenPalette)));
+    for _ in 0..30 {
+        let text = render_text(&mut screen, 40, 10);
+        if text.contains("Request changes") {
+            break;
+        }
+        screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+    let buffer = render_pane(&mut screen, Rect::new(0, 0, 40, 10));
+    let (x, y) = text_row(&buffer, "Request changes");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(matches!(
+        screen.dialog,
+        Some(Dialog::Composer {
+            kind: ComposerKind::Review(ReviewEvent::RequestChanges),
+            ..
+        })
+    ));
 }
 
 #[test]

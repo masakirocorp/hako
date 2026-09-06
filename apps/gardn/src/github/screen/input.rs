@@ -15,21 +15,21 @@ impl GithubScreen {
     }
     pub fn clear_hover(&mut self) {
         self.mouse_position = None;
-        if let Some(menu) = &mut self.queue_menu {
-            menu.hover(None);
+        if let Some(menu) = &mut self.menu {
+            menu.list.hover(None);
         }
     }
 
     pub fn hovered(&self, area: Rect) -> bool {
         !self.submitting
-            && self.queue_menu.is_none()
+            && self.menu.is_none()
             && self
                 .mouse_position
                 .is_some_and(|point| contains(area, point))
     }
 
     pub fn hovered_row(&self, area: Rect, total: usize, scroll: usize) -> Option<usize> {
-        if self.submitting || self.queue_menu.is_some() {
+        if self.submitting || self.menu.is_some() {
             return None;
         }
         let (x, y) = self.mouse_position?;
@@ -117,18 +117,17 @@ impl GithubScreen {
             return Vec::new();
         }
         self.clear_hover();
-        let queue_count = self.available_queues().len();
-        if let Some(menu) = &mut self.queue_menu {
+        if let Some(menu) = &mut self.menu {
+            let count = menu.items.len();
             match key.code {
-                KeyCode::Esc => self.queue_menu = None,
-                KeyCode::Up | KeyCode::BackTab => menu.move_prev(),
-                KeyCode::Down | KeyCode::Tab => menu.move_next(queue_count),
-                KeyCode::Home => menu.select(0),
-                KeyCode::End => menu.select(queue_count.saturating_sub(1)),
+                KeyCode::Esc => self.menu = None,
+                KeyCode::Up | KeyCode::BackTab => menu.list.move_prev(),
+                KeyCode::Down | KeyCode::Tab => menu.list.move_next(count),
+                KeyCode::Home => menu.list.select(0),
+                KeyCode::End => menu.list.select(count.saturating_sub(1)),
                 KeyCode::Enter | KeyCode::Char(' ') => {
-                    let selected = menu.selected;
-                    if let Some(&queue) = self.available_queues().get(selected) {
-                        return self.activate(GithubAction::Queue(queue));
+                    if let Some(&(action, _)) = menu.items.get(menu.list.selected) {
+                        return self.activate(action);
                     }
                 }
                 _ => {}
@@ -466,26 +465,30 @@ impl GithubScreen {
             self.diff_drag = false;
             return Vec::new();
         }
-        if self.queue_menu.is_some() {
-            let queues = self.available_queues();
-            let inner = inset(self.geometry.queue_menu);
-            let hit = ModalListViewport::new(queues.len(), inner.height as usize, 0)
-                .hit_visual_row(inner, mouse.column, mouse.row);
-            if let Some(menu) = &mut self.queue_menu {
-                menu.hover(hit);
-                match mouse.kind {
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        if let Some(index) = hit {
-                            return self.activate(GithubAction::Queue(queues[index]));
-                        }
-                        self.queue_menu = None;
+        if let Some(menu) = &mut self.menu {
+            let inner = inset(self.geometry.menu);
+            let viewport =
+                ModalListViewport::new(menu.items.len(), inner.height as usize, menu.scroll);
+            let hit =
+                viewport.hit_visual_row(viewport.scroll_area(inner).body, mouse.column, mouse.row);
+            menu.list.hover(hit);
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(index) = hit {
+                        let action = menu.items[index].0;
+                        return self.activate(action);
                     }
-                    MouseEventKind::ScrollDown if contains(inner, point) => {
-                        menu.move_next(queues.len())
-                    }
-                    MouseEventKind::ScrollUp if contains(inner, point) => menu.move_prev(),
-                    _ => {}
+                    self.menu = None;
                 }
+                MouseEventKind::ScrollDown if contains(inner, point) => {
+                    menu.list.hover(None);
+                    menu.list.move_next(menu.items.len());
+                }
+                MouseEventKind::ScrollUp if contains(inner, point) => {
+                    menu.list.hover(None);
+                    menu.list.move_prev();
+                }
+                _ => {}
             }
             self.compute(self.geometry.area);
             return Vec::new();
