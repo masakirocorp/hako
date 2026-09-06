@@ -10,7 +10,7 @@ impl App {
         let inside = view
             .github_pane_rect(&self.state)
             .contains((mouse.column, mouse.row).into());
-        if !inside && matches!(mouse.kind, crossterm::event::MouseEventKind::Up(_)) {
+        if !inside {
             if let Some(screen) = view.github.as_mut() {
                 screen.handle_mouse(mouse);
             }
@@ -21,6 +21,9 @@ impl App {
             || view.github.is_none()
             || !inside
         {
+            if let Some(screen) = view.github.as_mut() {
+                screen.clear_hover();
+            }
             return false;
         }
         if matches!(mouse.kind, crossterm::event::MouseEventKind::Down(_)) {

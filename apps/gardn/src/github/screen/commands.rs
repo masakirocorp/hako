@@ -31,6 +31,24 @@ impl GithubScreen {
                 }),
         }
     }
+    pub fn available_queues(&self) -> &'static [Queue] {
+        match self.tab {
+            GithubTab::PullRequests => &[
+                Queue::Authored,
+                Queue::Assigned,
+                Queue::Mentioned,
+                Queue::All,
+                Queue::ReviewRequested,
+            ],
+            GithubTab::Issues => &[
+                Queue::Authored,
+                Queue::Assigned,
+                Queue::Mentioned,
+                Queue::All,
+            ],
+            _ => &[],
+        }
+    }
     pub fn contextual_actions(&self) -> Vec<(GithubAction, String)> {
         use GithubAction as A;
         if self.submitting {
@@ -76,20 +94,11 @@ impl GithubScreen {
                 .into_iter()
                 .map(|tab| (A::Tab(tab), tab.label().into())),
         );
-        if matches!(self.tab, GithubTab::PullRequests | GithubTab::Issues) {
-            for queue in [
-                Queue::Authored,
-                Queue::Assigned,
-                Queue::Mentioned,
-                Queue::All,
-                Queue::ReviewRequested,
-            ] {
-                if self.tab == GithubTab::Issues && queue == Queue::ReviewRequested {
-                    continue;
-                }
-                actions.push((A::Queue(queue), queue_label(queue).into()));
-            }
-        }
+        actions.extend(
+            self.available_queues()
+                .iter()
+                .map(|&queue| (A::Queue(queue), queue_label(queue).into())),
+        );
         if self.tab == GithubTab::Actions {
             actions.extend([
                 (A::Runs(RunFilter::All), "All runs".into()),
@@ -208,6 +217,9 @@ impl GithubScreen {
         {
             return Vec::new();
         }
+        if action != A::ChooseQueue {
+            self.queue_menu = None;
+        }
         let previous_dialog = self.dialog.as_ref().map(std::mem::discriminant);
         match action {
             A::Palette => return vec![GithubEffect::OpenPalette],
@@ -236,6 +248,19 @@ impl GithubScreen {
                 self.run_sha = None;
                 self.focus = Focus::List;
                 self.refresh();
+            }
+            A::ChooseQueue => {
+                if self.queue_menu.is_some() {
+                    self.queue_menu = None;
+                } else if let Some(index) = self
+                    .available_queues()
+                    .iter()
+                    .position(|&queue| queue == self.queue)
+                {
+                    let mut menu = ModalListState::hidden(index);
+                    menu.show();
+                    self.queue_menu = Some(menu);
+                }
             }
             A::Queue(queue) => {
                 self.queue = queue;

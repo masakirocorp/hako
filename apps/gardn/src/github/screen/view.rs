@@ -77,7 +77,14 @@ impl GithubScreen {
         );
         let has_detail =
             self.detail.is_some() || self.selected_key.is_some() || self.selected_run.is_some();
-        let mut actions = vec![(A::Palette, "Actions…".into())];
+        let mut actions = Vec::new();
+        if !self.available_queues().is_empty() {
+            actions.push((
+                A::ChooseQueue,
+                format!("Queue: {} ▾", queue_label(self.queue)),
+            ));
+        }
+        actions.push((A::Palette, "Actions…".into()));
         if has_detail {
             actions.push((A::Back, "Back".into()));
             if self.item().is_some() {
@@ -97,9 +104,6 @@ impl GithubScreen {
             if self.has_more() {
                 actions.push((A::More, "More".into()));
             }
-            if matches!(self.tab, GithubTab::PullRequests | GithubTab::Issues) {
-                actions.push((A::Palette, format!("Queue: {}", queue_label(self.queue))));
-            }
             if self.repository.is_some() {
                 actions.push((A::ResetRepository, "Reset repo".into()));
             }
@@ -109,6 +113,30 @@ impl GithubScreen {
             row(if roomy { 5 } else { 2 }),
             &actions,
         );
+        if self.queue_menu.is_some() {
+            if let Some(trigger) = geometry
+                .controls
+                .iter()
+                .find(|control| control.action == A::ChooseQueue)
+            {
+                let width = 24.min(area.width);
+                let height = (self.available_queues().len() as u16 + 2).min(area.height);
+                let below = trigger.area.bottom();
+                let y = if below + height <= area.bottom() {
+                    below
+                } else {
+                    trigger.area.y.saturating_sub(height).max(area.y)
+                };
+                geometry.queue_menu = Rect::new(
+                    trigger.area.x.min(area.right().saturating_sub(width)),
+                    y,
+                    width,
+                    height,
+                );
+            } else {
+                self.queue_menu = None;
+            }
+        }
         let content = stack.content;
         if has_detail && area.width >= 110 {
             let list_width = (area.width / 3).min(45);

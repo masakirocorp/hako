@@ -19,6 +19,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::diff::{DiffMode, DiffRow, DiffSide, DiffViewState, ThreadLocation};
 use super::{domain::*, GithubRepository, ResolvedGithubScope};
+use crate::app::state::ModalListState;
 use crate::ui::ModalListViewport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,7 @@ pub enum RunFilter {
 pub enum GithubAction {
     Tab(GithubTab),
     Queue(Queue),
+    ChooseQueue,
     Runs(RunFilter),
     Refresh,
     More,
@@ -205,6 +207,7 @@ pub struct Geometry {
     pub modal: Rect,
     pub input: Rect,
     pub files: Rect,
+    pub queue_menu: Rect,
 }
 #[derive(Debug, Clone)]
 pub struct TextBuffer {
@@ -401,6 +404,8 @@ pub struct GithubScreen {
     pub control_focus: usize,
     pub geometry: Geometry,
     pub dialog: Option<Dialog>,
+    pub queue_menu: Option<ModalListState>,
+    mouse_position: Option<(u16, u16)>,
     pub error: Option<String>,
     pub notice: Option<String>,
     pub viewer: Option<Viewer>,
@@ -455,6 +460,8 @@ impl GithubScreen {
             control_focus: 0,
             geometry: Geometry::default(),
             dialog: None,
+            queue_menu: None,
+            mouse_position: None,
             error: None,
             notice: None,
             viewer: None,
@@ -539,7 +546,7 @@ impl GithubScreen {
     }
 }
 
-fn queue_label(queue: Queue) -> &'static str {
+pub(crate) fn queue_label(queue: Queue) -> &'static str {
     match queue {
         Queue::Authored => "Authored",
         Queue::ReviewRequested => "Review requested",

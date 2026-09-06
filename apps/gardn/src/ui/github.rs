@@ -10,7 +10,7 @@ use super::{
     scrollbar::render_scrollbar,
     widgets::{
         fill_rect, panel_contrast_fg, render_action_button, render_modal_header_bar,
-        secondary_action_style, ModalListViewport,
+        render_panel_shell, secondary_action_style, ModalListViewport,
     },
 };
 use crate::{
@@ -18,7 +18,8 @@ use crate::{
     github::{
         diff::{DiffCell, DiffLineKind, DiffMode, DiffRow, DiffSide},
         screen::{
-            DetailTab, Dialog, Entry, Focus, GithubAction, GithubScreen, ListRow, TextBuffer,
+            queue_label, DetailTab, Dialog, Entry, Focus, GithubAction, GithubScreen, ListRow,
+            TextBuffer,
         },
     },
 };
@@ -98,6 +99,17 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
         } else {
             secondary_action_style(palette)
         };
+        let style = if screen.hovered(control.area) {
+            if active || focused {
+                style.add_modifier(Modifier::UNDERLINED)
+            } else {
+                style
+                    .bg(palette.surface1)
+                    .fg(if danger { palette.red } else { palette.accent })
+            }
+        } else {
+            style
+        };
         let hint = (control.action == GithubAction::CloseScreen).then_some("Esc");
         render_action_button(frame, control.area, hint, &control.label, style);
     }
@@ -128,6 +140,44 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                     palette.subtext0
                 })),
             geometry.status,
+        );
+    }
+    render_queue_menu(screen, palette, frame);
+}
+
+fn render_queue_menu(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
+    let Some(menu) = &screen.queue_menu else {
+        return;
+    };
+    let Some(inner) = render_panel_shell(
+        frame,
+        screen.geometry.queue_menu,
+        palette.accent,
+        palette.panel_bg,
+    ) else {
+        return;
+    };
+    for (index, &queue) in screen
+        .available_queues()
+        .iter()
+        .take(inner.height as usize)
+        .enumerate()
+    {
+        let style = if menu.visible() == Some(index) {
+            Style::default()
+                .fg(panel_contrast_fg(palette))
+                .bg(palette.accent)
+        } else {
+            Style::default().fg(palette.text)
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                " {} {}",
+                if screen.queue == queue { "✓" } else { " " },
+                queue_label(queue)
+            ))
+            .style(style),
+            Rect::new(inner.x, inner.y + index as u16, inner.width, 1),
         );
     }
 }
@@ -161,6 +211,15 @@ fn render_list(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             scroll.body,
         );
     }
+    let hovered = screen
+        .dialog
+        .is_none()
+        .then(|| {
+            screen
+                .hovered_row(area, screen.geometry.list_rows.len(), screen.list_scroll)
+                .and_then(|row| screen.geometry.list_rows[row].entry())
+        })
+        .flatten();
     for (row, visual) in viewport.visible_range().enumerate() {
         let list_row = screen.geometry.list_rows[visual];
         let Some(visible) = list_row.entry() else {
@@ -185,6 +244,11 @@ fn render_list(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(palette.text)
+        };
+        let style = if !heading && hovered == Some(visible) {
+            style.bg(palette.surface1)
+        } else {
+            style
         };
         let text = match (entry, metadata) {
             (Entry::Item(item), false) => item.title.clone(),
@@ -233,7 +297,11 @@ fn render_list(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             viewport.metrics(),
             track,
             palette.surface1,
-            palette.overlay1,
+            if screen.dialog.is_none() && screen.hovered(track) {
+                palette.accent
+            } else {
+                palette.overlay1
+            },
             "▐",
         );
     }
@@ -267,6 +335,15 @@ fn render_detail(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             scroll.body,
         );
     }
+    let hovered = screen
+        .dialog
+        .is_none()
+        .then(|| {
+            screen
+                .hovered_row(area, screen.detail_rows.len(), screen.detail_scroll)
+                .and_then(|row| screen.detail_rows[row].target)
+        })
+        .flatten();
     for (row, index) in viewport.visible_range().enumerate() {
         let line = &screen.detail_rows[index];
         let selected = line.target.is_some() && line.target == screen.selected_row;
@@ -276,11 +353,13 @@ fn render_detail(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             } else {
                 palette.text
             })
-            .bg(if selected {
-                palette.surface1
-            } else {
-                palette.panel_bg
-            });
+            .bg(
+                if selected || line.target.is_some() && line.target == hovered {
+                    palette.surface1
+                } else {
+                    palette.panel_bg
+                },
+            );
         frame.render_widget(
             Paragraph::new(line.text.as_str()).style(style),
             Rect::new(
@@ -297,7 +376,11 @@ fn render_detail(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             viewport.metrics(),
             track,
             palette.surface1,
-            palette.overlay1,
+            if screen.dialog.is_none() && screen.hovered(track) {
+                palette.accent
+            } else {
+                palette.overlay1
+            },
             "▐",
         );
     }
@@ -322,6 +405,11 @@ fn render_files(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             scroll.body,
         );
     }
+    let hovered = screen
+        .dialog
+        .is_none()
+        .then(|| screen.hovered_row(area, files.len(), screen.file_scroll))
+        .flatten();
     for (row, index) in viewport.visible_range().enumerate() {
         let file_index = files[index];
         let file = &diff.files()[file_index].file;
@@ -340,7 +428,9 @@ fn render_files(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                     } else {
                         palette.text
                     })
-                    .bg(if selected {
+                    .bg(if hovered == Some(index) {
+                        palette.surface1
+                    } else if selected {
                         palette.surface0
                     } else {
                         palette.panel_bg
@@ -360,7 +450,11 @@ fn render_files(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             viewport.metrics(),
             track,
             palette.surface1,
-            palette.overlay1,
+            if screen.dialog.is_none() && screen.hovered(track) {
+                palette.accent
+            } else {
+                palette.overlay1
+            },
             "▐",
         );
     }
@@ -432,7 +526,15 @@ fn render_diff(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                         ),
                     ] {
                         if let Some(cell) = cell {
-                            render_diff_cell(frame, palette, cell, side, rect, selection.as_ref());
+                            render_diff_cell(
+                                frame,
+                                palette,
+                                cell,
+                                side,
+                                rect,
+                                selection.as_ref(),
+                                screen.dialog.is_none() && screen.hovered(rect),
+                            );
                         }
                     }
                 } else if let Some(cell) = left.as_ref() {
@@ -443,6 +545,7 @@ fn render_diff(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                         DiffSide::Left,
                         line_area,
                         selection.as_ref(),
+                        screen.dialog.is_none() && screen.hovered(line_area),
                     );
                 } else if let Some(cell) = right.as_ref() {
                     render_diff_cell(
@@ -452,6 +555,7 @@ fn render_diff(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                         DiffSide::Right,
                         line_area,
                         selection.as_ref(),
+                        screen.dialog.is_none() && screen.hovered(line_area),
                     );
                 }
             }
@@ -463,7 +567,11 @@ fn render_diff(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             viewport.metrics(),
             track,
             palette.surface1,
-            palette.overlay1,
+            if screen.dialog.is_none() && screen.hovered(track) {
+                palette.accent
+            } else {
+                palette.overlay1
+            },
             "▐",
         );
     }
@@ -476,6 +584,7 @@ fn render_diff_cell(
     side: DiffSide,
     area: Rect,
     selection: Option<&crate::github::diff::DiffSelection>,
+    hovered: bool,
 ) {
     let (marker, color) = match cell.kind {
         DiffLineKind::Context => (" ", palette.text),
@@ -497,6 +606,8 @@ fn render_diff_cell(
     };
     let style = Style::default().fg(color).bg(if selected {
         palette.surface1
+    } else if hovered && cell.line_on(side).is_some() {
+        palette.surface0
     } else {
         palette.panel_bg
     });
@@ -578,6 +689,7 @@ fn render_dialog(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                 input,
                 text,
                 screen.focus != Focus::Controls && !screen.submitting,
+                screen.hovered(input),
             )
         }
         Dialog::Confirm { description, .. } => frame.render_widget(
@@ -607,11 +719,15 @@ fn render_dialog(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
                 let applied = screen.item().is_some_and(|item| {
                     item.labels.iter().any(|current| current.name == label.name)
                 });
-                let style = Style::default().fg(palette.text).bg(if index == *selected {
-                    palette.surface1
-                } else {
-                    palette.panel_bg
-                });
+                let style = Style::default().fg(palette.text).bg(
+                    if index == *selected
+                        || screen.hovered(Rect::new(input.x, input.y + row as u16, input.width, 1))
+                    {
+                        palette.surface1
+                    } else {
+                        palette.panel_bg
+                    },
+                );
                 frame.render_widget(
                     Paragraph::new(format!(
                         "[{}] {}",
@@ -644,6 +760,7 @@ fn render_text_buffer(
     area: Rect,
     text: &TextBuffer,
     focused: bool,
+    hovered: bool,
 ) {
     if area.is_empty() {
         return;
@@ -652,10 +769,15 @@ fn render_text_buffer(
     let top = layout
         .cursor_row
         .saturating_sub(area.height.saturating_sub(1) as usize);
+    let background = if hovered {
+        palette.surface1
+    } else {
+        palette.surface0
+    };
     fill_rect(
         frame,
         area,
-        Style::default().fg(palette.text).bg(palette.surface0),
+        Style::default().fg(palette.text).bg(background),
     );
     for (row, range) in layout
         .lines
@@ -666,7 +788,7 @@ fn render_text_buffer(
     {
         frame.render_widget(
             Paragraph::new(&text.value[range.clone()])
-                .style(Style::default().fg(palette.text).bg(palette.surface0)),
+                .style(Style::default().fg(palette.text).bg(background)),
             Rect::new(area.x, area.y + row as u16, area.width, 1),
         );
     }

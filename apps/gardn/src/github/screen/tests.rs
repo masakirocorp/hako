@@ -140,6 +140,82 @@ fn text_row(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
 }
 
 #[test]
+fn hovering_a_pull_request_highlights_without_changing_keyboard_selection() {
+    let mut screen = queued_screen();
+    let area = Rect::new(9, 4, 100, 30);
+    let before = render_pane(&mut screen, area);
+    let point = text_row(&before, "Pull request 2");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: point.0,
+        row: point.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    let hovered = render_pane(&mut screen, area);
+    assert_ne!(hovered[point].bg, before[point].bg);
+    assert_eq!(
+        text_row(&hovered, "› Pull request 1"),
+        text_row(&before, "› Pull request 1")
+    );
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    });
+    let left = render_pane(&mut screen, area);
+    assert_eq!(left[point], before[point]);
+    screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        matches!(&screen.drain_requests()[..], [GithubRequest::Details(item)] if item.number == 1)
+    );
+}
+
+#[test]
+fn queue_picker_selects_only_filters_supported_by_the_current_tab() {
+    let mut screen = queued_screen();
+    let area = Rect::new(9, 4, 100, 30);
+    let before = render_pane(&mut screen, area);
+    let trigger = text_row(&before, "Queue:");
+    let effects = screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: trigger.0,
+        row: trigger.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(!effects
+        .iter()
+        .any(|effect| matches!(effect, GithubEffect::OpenPalette)));
+    let menu = render_pane(&mut screen, area);
+    text_row(&menu, "Review requested");
+    let all = text_row(&menu, "All");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: all.0,
+        row: all.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(
+        matches!(&screen.drain_requests()[..], [GithubRequest::Queue(request)] if request.queue == Queue::All && request.kind == ItemKind::PullRequest)
+    );
+    text_row(&render_pane(&mut screen, area), "Queue: All");
+
+    screen.activate(GithubAction::Tab(GithubTab::Issues));
+    screen.drain_requests();
+    screen.activate(GithubAction::ChooseQueue);
+    let menu = render_pane(&mut screen, area);
+    let menu_text: String = menu.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(!menu_text.contains("Review requested"));
+    screen.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+    screen.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        matches!(&screen.drain_requests()[..], [GithubRequest::Queue(request)] if request.queue == Queue::Assigned && request.kind == ItemKind::Issue)
+    );
+    text_row(&render_pane(&mut screen, area), "Queue: Assigned");
+}
+
+#[test]
 fn pane_content_has_margins_group_gaps_and_clickable_metadata() {
     for area in [Rect::new(9, 4, 100, 35), Rect::new(9, 4, 60, 25)] {
         let mut screen = queued_screen();

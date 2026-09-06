@@ -13,11 +13,54 @@ impl GithubScreen {
             _ => {}
         }
     }
+    pub fn clear_hover(&mut self) {
+        self.mouse_position = None;
+        if let Some(menu) = &mut self.queue_menu {
+            menu.hover(None);
+        }
+    }
+
+    pub fn hovered(&self, area: Rect) -> bool {
+        !self.submitting
+            && self.queue_menu.is_none()
+            && self
+                .mouse_position
+                .is_some_and(|point| contains(area, point))
+    }
+
+    pub fn hovered_row(&self, area: Rect, total: usize, scroll: usize) -> Option<usize> {
+        if self.submitting || self.queue_menu.is_some() {
+            return None;
+        }
+        let (x, y) = self.mouse_position?;
+        ModalListViewport::new(total, area.height as usize, scroll).hit_visual_row(area, x, y)
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Vec<GithubEffect> {
         if key.kind == KeyEventKind::Release {
             return Vec::new();
         }
         if self.submitting {
+            return Vec::new();
+        }
+        self.clear_hover();
+        let queue_count = self.available_queues().len();
+        if let Some(menu) = &mut self.queue_menu {
+            match key.code {
+                KeyCode::Esc => self.queue_menu = None,
+                KeyCode::Up | KeyCode::BackTab => menu.move_prev(),
+                KeyCode::Down | KeyCode::Tab => menu.move_next(queue_count),
+                KeyCode::Home => menu.select(0),
+                KeyCode::End => menu.select(queue_count.saturating_sub(1)),
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    let selected = menu.selected;
+                    if let Some(&queue) = self.available_queues().get(selected) {
+                        return self.activate(GithubAction::Queue(queue));
+                    }
+                }
+                _ => {}
+            }
+            self.compute(self.geometry.area);
             return Vec::new();
         }
         if self.dialog.is_some() {
@@ -320,6 +363,7 @@ impl GithubScreen {
     }
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Vec<GithubEffect> {
         let point = (mouse.column, mouse.row);
+        self.mouse_position = contains(self.geometry.area, point).then_some(point);
         if self.submitting {
             return Vec::new();
         }
@@ -327,6 +371,33 @@ impl GithubScreen {
             self.scrollbar_drag = None;
             self.file_scrollbar_drag = None;
             self.diff_drag = false;
+            return Vec::new();
+        }
+        if self.queue_menu.is_some() {
+            let queues = self.available_queues();
+            let inner = inset(self.geometry.queue_menu);
+            let hit = ModalListViewport::new(queues.len(), inner.height as usize, 0)
+                .hit_visual_row(inner, mouse.column, mouse.row);
+            if let Some(menu) = &mut self.queue_menu {
+                menu.hover(hit);
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(index) = hit {
+                            return self.activate(GithubAction::Queue(queues[index]));
+                        }
+                        self.queue_menu = None;
+                    }
+                    MouseEventKind::ScrollDown if contains(inner, point) => {
+                        menu.move_next(queues.len())
+                    }
+                    MouseEventKind::ScrollUp if contains(inner, point) => menu.move_prev(),
+                    _ => {}
+                }
+            }
+            self.compute(self.geometry.area);
+            return Vec::new();
+        }
+        if mouse.kind == MouseEventKind::Moved {
             return Vec::new();
         }
         if !contains(self.geometry.area, point) {
