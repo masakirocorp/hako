@@ -1599,6 +1599,7 @@ pub enum Mode {
     CommandPalette,
     AgentProfilePicker,
     GitRepoPicker,
+    Github,
     ConfigDiagnostics,
 }
 
@@ -1615,6 +1616,7 @@ impl Mode {
                 | Self::CommandPalette
                 | Self::AgentProfilePicker
                 | Self::GitRepoPicker
+                | Self::Github
                 | Self::GroupMenu
                 | Self::AgentMenu
         )
@@ -2282,7 +2284,6 @@ pub struct SettingsState {
     pub pending_browser_command: Option<String>,
     pub pending_review_command: Option<String>,
     pub pending_editor_command: Option<String>,
-    pub pending_github_command: Option<String>,
     /// Pending default sidebar width while settings is open.
     pub pending_sidebar_width: Option<u16>,
     /// Pending minimum expanded sidebar width while settings is open.
@@ -3527,7 +3528,6 @@ pub struct AppState {
     pub browser_command: String,
     pub review_command: String,
     pub editor_command: String,
-    pub github_command: String,
     pub pane_border_agent_info: PaneBorderAgentInfoConfig,
     pub status_indicators: StatusIndicatorStyle,
     pub pane_history_persistence: bool,
@@ -4191,7 +4191,7 @@ impl AppState {
             ProjectCommandKind::Browser => &self.browser_command,
             ProjectCommandKind::Review => &self.review_command,
             ProjectCommandKind::Editor => &self.editor_command,
-            ProjectCommandKind::Github => &self.github_command,
+            ProjectCommandKind::Github => return true,
         };
         !command.trim().is_empty()
     }
@@ -4659,7 +4659,6 @@ impl AppState {
             browser_command: "terminal-browser".to_string(),
             review_command: "hunk diff --watch".to_string(),
             editor_command: "fresh .".to_string(),
-            github_command: "ghui".to_string(),
             pane_border_agent_info: PaneBorderAgentInfoConfig::default(),
             status_indicators: StatusIndicatorStyle::default(),
             mobile_width_threshold: crate::config::DEFAULT_MOBILE_WIDTH_THRESHOLD,
@@ -4743,7 +4742,6 @@ impl AppState {
                 pending_browser_command: None,
                 pending_review_command: None,
                 pending_editor_command: None,
-                pending_github_command: None,
                 pending_sidebar_width: None,
                 pending_sidebar_arrangement: None,
                 pending_sidebar_initial_state: None,

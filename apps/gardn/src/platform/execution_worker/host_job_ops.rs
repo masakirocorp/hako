@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::execution_host::protocol::{
     CommandSpec, GitStatusSnapshot, ObservedProcess, PortSnapshot, PortTransport,
@@ -407,19 +407,7 @@ pub(super) fn run_bounded_process(
             format!("{label} cancelled before start"),
         ));
     }
-    // Put the child in a new process group so descendants cannot outlive cancel.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setpgid(0, 0) != 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
+    crate::platform::configure_cancellable_command(command);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -448,7 +436,7 @@ pub(super) fn run_bounded_process(
 
     let status = loop {
         if cancel.load(Ordering::Relaxed) {
-            terminate_child(&mut child);
+            crate::platform::terminate_cancellable_child(&mut child);
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
             return Err(worker_error(
@@ -460,7 +448,7 @@ pub(super) fn run_bounded_process(
             Ok(Some(status)) => break status,
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(err) => {
-                terminate_child(&mut child);
+                crate::platform::terminate_cancellable_child(&mut child);
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
                 return Err(worker_error(WorkerErrorCode::Failed, err.to_string()));
@@ -497,34 +485,6 @@ pub(super) fn run_bounded_process(
         stdout,
         stderr,
     })
-}
-
-#[cfg(unix)]
-pub(super) fn terminate_child(child: &mut std::process::Child) {
-    let pid = child.id();
-    if pid > 0 {
-        unsafe {
-            // Kill the whole process group first so pipe-holding descendants die.
-            let _ = libc::killpg(pid as libc::pid_t, libc::SIGKILL);
-            let _ = libc::kill(pid as libc::pid_t, libc::SIGKILL);
-        }
-    }
-    let _ = child.kill();
-    // Bounded wait: do not hang forever if a descendant races the group kill.
-    let deadline = Instant::now() + Duration::from_millis(500);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break;
-            }
-        }
-    }
 }
 
 #[cfg(unix)]

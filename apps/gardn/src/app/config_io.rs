@@ -195,31 +195,23 @@ impl App {
         }
     }
 
-    pub(super) fn save_commands(
-        &mut self,
-        browser: &str,
-        review: &str,
-        editor: &str,
-        github: &str,
-    ) {
+    pub(super) fn save_commands(&mut self, browser: &str, review: &str, editor: &str) {
         let commands = crate::config::CommandsConfig {
             browser: browser.trim().to_string(),
             review: review.trim().to_string(),
             editor: editor.trim().to_string(),
-            github: github.trim().to_string(),
         };
         self.state.browser_command.clone_from(&commands.browser);
         self.state.review_command.clone_from(&commands.review);
         self.state.editor_command.clone_from(&commands.editor);
-        self.state.github_command.clone_from(&commands.github);
         self.state.settings.pending_browser_command = Some(commands.browser.clone());
         self.state.settings.pending_review_command = Some(commands.review.clone());
         self.state.settings.pending_editor_command = Some(commands.editor.clone());
-        self.state.settings.pending_github_command = Some(commands.github.clone());
         if self.update_config_file("project commands", |content| {
             let content = crate::config::remove_section_key(content, "commands", "git");
             let content = crate::config::remove_section_key(&content, "commands", "diff");
             let content = crate::config::remove_section_key(&content, "commands", "ide");
+            let content = crate::config::remove_section_key(&content, "commands", "github");
             let content = crate::config::upsert_section_value(
                 &content,
                 "commands",
@@ -232,17 +224,11 @@ impl App {
                 "review",
                 &toml::Value::String(commands.review.clone()).to_string(),
             );
-            let content = crate::config::upsert_section_value(
+            crate::config::upsert_section_value(
                 &content,
                 "commands",
                 "editor",
                 &toml::Value::String(commands.editor.clone()).to_string(),
-            );
-            crate::config::upsert_section_value(
-                &content,
-                "commands",
-                "github",
-                &toml::Value::String(commands.github.clone()).to_string(),
             )
         }) {
             self.apply_config_from_disk(false);
@@ -919,7 +905,6 @@ mod tests {
             "  terminal-browser  ",
             r#"  hunk diff --watch --theme auto  "#,
             "  fresh .  ",
-            "  ghui  ",
         );
 
         let content = std::fs::read_to_string(&path).unwrap();
@@ -927,14 +912,12 @@ mod tests {
         assert_eq!(config.commands.browser, "terminal-browser");
         assert_eq!(config.commands.review, "hunk diff --watch --theme auto");
         assert_eq!(config.commands.editor, "fresh .");
-        assert_eq!(config.commands.github, "ghui");
         assert!(!content.contains("\ngit ="));
         assert!(!content.contains("\ndiff ="));
         assert!(!content.contains("\nide ="));
         assert_eq!(app.state.browser_command, config.commands.browser);
         assert_eq!(app.state.review_command, config.commands.review);
         assert_eq!(app.state.editor_command, config.commands.editor);
-        assert_eq!(app.state.github_command, config.commands.github);
         let _ = std::fs::remove_file(path);
     }
 
@@ -956,7 +939,7 @@ mod tests {
             crate::config::TestEnvVar::set(crate::config::CONFIG_PATH_ENV_VAR, &path);
         let mut app = test_app();
 
-        app.save_commands("terminal-browser", "", "fresh .", "ghui");
+        app.save_commands("terminal-browser", "", "fresh .");
 
         let content = std::fs::read_to_string(&path).unwrap();
         let config: crate::config::Config = toml::from_str(&content).unwrap();

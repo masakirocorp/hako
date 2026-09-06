@@ -307,9 +307,6 @@ impl TerminalRuntime {
     pub(crate) fn instance_key(&self) -> usize {
         self.0.instance_key()
     }
-    pub(crate) fn signal_child(&self, signal: crate::platform::Signal) {
-        self.0.signal_child(signal);
-    }
 
     pub fn begin_graceful_release(&self, agent: crate::detect::Agent) {
         self.0.begin_graceful_release(agent);

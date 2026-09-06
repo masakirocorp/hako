@@ -199,7 +199,7 @@ fn parse_github_origin(origin: &str) -> Option<crate::github::GithubRepository> 
 pub(crate) fn discover_github_repositories(
     cwds: &[PathBuf],
 ) -> crate::github::GithubDiscoveryOutcome {
-    use crate::github::{GithubDiscoveryOutcome, GithubRepositoryLocation};
+    use crate::github::GithubDiscoveryOutcome;
 
     let mut roots = std::collections::BTreeSet::new();
     for cwd in cwds {
@@ -211,11 +211,11 @@ pub(crate) fn discover_github_repositories(
             Err(error) => return GithubDiscoveryOutcome::Failed(error),
         }
     }
-    let mut repositories = std::collections::BTreeMap::new();
+    let mut repositories = std::collections::BTreeSet::new();
     for root in roots {
         match github_repository_for_repo_root(&root) {
             Ok(Some(repository)) => {
-                repositories.entry(repository).or_insert(root);
+                repositories.insert(repository);
             }
             Ok(None) => {}
             Err(error) => return GithubDiscoveryOutcome::Failed(error),
@@ -224,15 +224,7 @@ pub(crate) fn discover_github_repositories(
     if repositories.is_empty() {
         GithubDiscoveryOutcome::Empty
     } else {
-        GithubDiscoveryOutcome::Repositories(
-            repositories
-                .into_iter()
-                .map(|(repository, root)| GithubRepositoryLocation {
-                    repository,
-                    local_path: Some(root),
-                })
-                .collect(),
-        )
+        GithubDiscoveryOutcome::Repositories(repositories.into_iter().collect())
     }
 }
 
@@ -470,32 +462,6 @@ mod tests {
             .is_err());
             std::fs::remove_dir_all(root).unwrap();
         }
-    }
-
-    #[test]
-    fn github_discovery_retains_canonical_checkout_for_selected_identity() {
-        use crate::github::{resolve_github_scope, GithubDiscoveryOutcome, GithubRepositoryScope};
-
-        let root = temp_test_dir("github-checkout");
-        run_git(&root, &["init", "-b", "main"]);
-        run_git(
-            &root,
-            &["remote", "add", "origin", "https://github.com/Acme/One.git"],
-        );
-        let nested = root.join("nested");
-        std::fs::create_dir(&nested).unwrap();
-        let discovery = discover_github_repositories(&[nested, root.clone()]);
-        let GithubDiscoveryOutcome::Repositories(locations) = &discovery else {
-            panic!("expected discovered checkout: {discovery:?}");
-        };
-        assert_eq!(locations.len(), 1);
-        let scope = GithubRepositoryScope::selected_from_input("Acme/One.GIT").unwrap();
-        let resolved = resolve_github_scope(&scope, &discovery, None).unwrap();
-        assert_eq!(
-            resolved.repository_paths.get("acme/one"),
-            Some(&std::fs::canonicalize(&root).unwrap())
-        );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

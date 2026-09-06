@@ -421,6 +421,12 @@ impl HeadlessServer {
             if self.handle_open_project_command_request() {
                 needs_render = true;
             }
+            needs_render |= self.app.poll_github();
+            for client in self.clients.values_mut() {
+                if let Some(view) = client.view_state.as_mut() {
+                    needs_render |= self.app.pump_github_for_view(view);
+                }
+            }
 
             self.drain_client_config_reload_request();
             if self.app.reconcile_terminal_themes() {
@@ -496,6 +502,9 @@ impl HeadlessServer {
                     self.has_app_client(),
                 ),
                 client_selection_deadline,
+                self.app
+                    .github_has_pending()
+                    .then_some(now + Duration::from_millis(50)),
             ]
             .into_iter()
             .flatten()
@@ -1330,8 +1339,11 @@ impl HeadlessServer {
         let mut removed_terminal_attach = false;
         self.pending_clipboard_image_stages
             .retain(|_, pending| pending.client_id != client_id);
-        if let Some(removed) = removed {
+        if let Some(mut removed) = removed {
             self.remove_staged_clipboard_files(removed.staged_clipboard_files);
+            if let Some(view) = removed.view_state.as_mut() {
+                self.app.close_github_for_view(view);
+            }
             if let Some(view) = removed.view_state.as_ref() {
                 let view_id = view.id();
                 if let Some(hosts) = self.app.execution_hosts.as_ref() {
@@ -1403,6 +1415,26 @@ impl HeadlessServer {
         };
 
         let target_workspace = self.app.state.request_open_project_command_workspace.take();
+        if kind == crate::app::state::ProjectCommandKind::Github {
+            let target_client = self.foreground_client_id.and_then(|id| {
+                self.clients
+                    .get_mut(&id)
+                    .and_then(|client| client.view_state.take())
+                    .map(|view| (id, view))
+            });
+            if let Some((id, mut view)) = target_client {
+                if target_workspace.is_some() {
+                    view.active_workspace = target_workspace;
+                }
+                self.app.open_github_for_view(&mut view);
+                if let Some(client) = self.clients.get_mut(&id) {
+                    client.view_state = Some(view);
+                }
+            } else {
+                self.app.open_default_github(target_workspace);
+            }
+            return true;
+        }
         let result = if let Some(ws_idx) = target_workspace {
             self.app.state.open_project_command_for_workspace(
                 &mut self.app.terminal_runtimes,
@@ -2104,6 +2136,35 @@ impl HeadlessServer {
 
     fn handle_internal_event_with_forwarding(&mut self, ev: AppEvent) -> bool {
         match &ev {
+            AppEvent::ClientClipboardWrite { view_id, content } => {
+                let client_id = self.clients.iter().find_map(|(id, client)| {
+                    client
+                        .view_state
+                        .as_ref()
+                        .filter(|view| view.id() == *view_id)
+                        .map(|_| *id)
+                });
+                if let Some(client_id) = client_id {
+                    let data = base64::engine::general_purpose::STANDARD.encode(content);
+                    self.send_to_client(client_id, ServerMessage::Clipboard { data });
+                }
+                true
+            }
+            AppEvent::ClientOpenUrl { view_id, url } => {
+                let client_id = self.clients.iter().find_map(|(id, client)| {
+                    client
+                        .view_state
+                        .as_ref()
+                        .filter(|view| view.id() == *view_id)
+                        .map(|_| *id)
+                });
+                if let Some(client_id) = client_id {
+                    if crate::app::rendering_client_may_open_url(url, false) {
+                        self.send_to_client(client_id, ServerMessage::OpenUrl { url: url.clone() });
+                    }
+                }
+                true
+            }
             AppEvent::ClipboardWrite { content } => {
                 // UI clipboard writes belong to the invoking foreground controller.
                 let data = base64::engine::general_purpose::STANDARD.encode(content.as_slice());
@@ -4785,7 +4846,7 @@ mod tests {
             .get_mut(&terminal_id)
             .expect("terminal state")
             .terminal_theme_binding =
-            Some(crate::terminal_theme::TerminalThemeBinding::workspace_palette(None));
+            Some(crate::terminal_theme::TerminalThemeBinding::workspace_palette());
         let render_background = |runtime: &crate::terminal::TerminalRuntime| {
             let backend = ratatui::backend::TestBackend::new(80, 24);
             let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
@@ -8244,6 +8305,63 @@ next_tab = ""
             other => panic!("expected ReloadSoundConfig, got {other:?}"),
         }
         assert!(!server.app.state.request_client_config_reload);
+    }
+
+    #[test]
+    fn client_host_actions_follow_the_invoking_view_not_foreground_focus() {
+        let mut server = test_headless_server();
+        let (first_writer, first_control, _first_render) = test_client_writer();
+        let (second_writer, second_control, _second_render) = test_client_writer();
+        for (id, writer) in [(1, first_writer), (2, second_writer)] {
+            let mut client = ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                id,
+                RenderEncoding::SemanticFrame,
+                Some(writer),
+            );
+            client.view_state = Some(crate::app::ClientViewState::from_default_client_state(
+                &server.app.state,
+            ));
+            server.clients.insert(id, client);
+        }
+        server.foreground_client_id = Some(2);
+        let view_id = server.clients[&1]
+            .view_state
+            .as_ref()
+            .expect("invoking view")
+            .id();
+        server.handle_internal_event_with_forwarding(AppEvent::ClientOpenUrl {
+            view_id,
+            url: "https://github.com/acme/project/pull/17".into(),
+        });
+        server.handle_internal_event_with_forwarding(AppEvent::ClientClipboardWrite {
+            view_id,
+            content: b"acme/project#17".to_vec(),
+        });
+        assert!(matches!(
+            read_server_message(first_control.recv_timeout(Duration::from_secs(1)).expect("browser action")),
+            ServerMessage::OpenUrl { url } if url == "https://github.com/acme/project/pull/17"
+        ));
+        assert!(matches!(
+            read_server_message(first_control.recv_timeout(Duration::from_secs(1)).expect("clipboard action")),
+            ServerMessage::Clipboard { data } if data == "YWNtZS9wcm9qZWN0IzE3"
+        ));
+        assert!(matches!(
+            second_control.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        server.remove_client(1);
+        server.handle_internal_event_with_forwarding(AppEvent::ClientOpenUrl {
+            view_id,
+            url: "https://github.com/acme/project/pull/17".into(),
+        });
+        assert!(matches!(
+            second_control.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
     }
 
     #[test]

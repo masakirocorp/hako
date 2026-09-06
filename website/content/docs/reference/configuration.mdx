@@ -270,14 +270,23 @@ Agent sound override keys are `pi`, `claude`, `codex`, `gemini`, `cursor`, `agy`
 
 ### `[commands]`
 
-| Key       | Type   | Default             | Description                                       |
-| --------- | ------ | ------------------- | ------------------------------------------------- |
-| `browser` | string | `terminal-browser`  | Browser command, launched from the workspace.     |
-| `review`  | string | `hunk diff --watch` | Repository review command.                        |
-| `editor`  | string | `fresh .`           | Project editor command.                           |
-| `github`  | string | `ghui`              | Mouse-aware GitHub pull request and issue client. |
+| Key       | Type   | Default             | Description                                   |
+| --------- | ------ | ------------------- | --------------------------------------------- |
+| `browser` | string | `terminal-browser`  | Browser command, launched from the workspace. |
+| `review`  | string | `hunk diff --watch` | Repository review command.                    |
+| `editor`  | string | `fresh .`           | Project editor command.                       |
 
-**Settings > Commands** edits these values. Clear one field to hide that project action. Each field can restore its built-in value, and **Reset All Commands** restores all four defaults. The curated ghui command requires Gardn's pinned Masakiro companion release. It starts in the local Space directory and receives launch-only theme, scrollbar, Space name, repository scope, and verified checkout paths. **Space Settings > GitHub** stores Automatic, Selected repositories, or Group organization scope. A running ghui retains its launch scope until restarted.
+**Settings > Commands** edits these three executable commands. Clear one field to hide that project action. Each field can restore its built-in value, and **Reset All Commands** restores all three defaults.
+
+GitHub is a built-in, client-local screen that uses existing `gh` authentication and Gardn's theme, palette, and scrollbars. It has no `[commands]` entry or separate configuration file.
+
+**Space Settings > GitHub** stores the scope:
+
+- **Automatic** uses discovered local GitHub repositories. If none exist, it falls back to the Group organization or personal queues. Discovery errors do not broaden the scope.
+- **Selected repositories** uses the exact `owner/repository` identities and overrides the Group organization.
+- **Group organization** uses the organization configured in **Group Settings > GitHub**.
+
+Repository narrowing never widens this scope. Scope changes close invalidated GitHub views. Reopening GitHub applies the settings. See [Open GitHub](/docs/guides/workspaces-and-navigation#open-github) for supported workflows.
 
 ### `[update]`
 

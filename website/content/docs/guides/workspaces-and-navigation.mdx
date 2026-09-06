@@ -82,28 +82,31 @@ Space Settings keeps its name, host, and directory in **General**. Its **GitHub*
 
 ## Open curated project tools
 
-Gardn provides four project actions. Each action opens in a managed tab and uses the selected workspace context.
+Browser, Review, and Editor open executable tools in managed tabs using the selected workspace context.
 
 | Action  | Default command     | Install                                                  |
 | ------- | ------------------- | -------------------------------------------------------- |
 | Browser | `terminal-browser`  | `curl -fsSL https://terminal-browser.sh/install \| bash` |
 | Review  | `hunk diff --watch` | `brew install hunk` or `npm i -g hunkdiff`               |
 | Editor  | `fresh .`           | `brew install fresh-editor`                              |
-| GitHub  | `ghui`              | `brew install masakirocorp/tap/ghui`                     |
 
 To open a tool:
 
 1. Press **Ctrl+B**, then **Space**.
-2. Search for **Open Browser**, **Open Review**, **Open Editor**, or **Open GitHub**.
+2. Search for **Open Browser**, **Open Review**, or **Open Editor**.
 3. Select the action and press **Enter**.
 
-Browser, Editor, and GitHub start in the workspace directory. Review starts in an observed Git repository. Gardn asks you to select a repository when the workspace contains more than one.
+Browser and Editor start in the workspace directory. Review starts in an observed Git repository. Gardn asks you to select a repository when the workspace contains more than one.
 
 The default tools use the active Gardn theme. A terminal-derived theme passes the terminal colors through. A custom command runs unchanged.
 
 Open **Settings > Commands** to replace a command. Clear a command to hide its action. Use its reset row to restore the default.
 
-The curated GitHub launcher requires the pinned Masakiro ghui companion release. Gardn passes the active terminal palette and visible scrollbars as launch-only settings. Gardn does not modify your saved ghui configuration. See **Settings > About** for the upstream copyright and MIT acknowledgment.
+## Open GitHub
+
+Choose **Open GitHub** from Gardn's command palette. GitHub opens a built-in screen for the current client, not a managed tool tab. It uses the existing `gh` authentication. If you have not signed in, run `gh auth login` first.
+
+The native screen uses Gardn's palette, theme, scrollbars, and settings. It has no separate executable command, installation, or configuration file. Gardn adapts behavior from Kit Langton's ghui under the MIT license. See **Settings > About** for the copyright and license acknowledgment.
 
 To scope GitHub for a group:
 
@@ -117,11 +120,19 @@ To scope GitHub for a group:
 - **Selected repositories** accepts one or more `owner/repository` identities. Press **Enter** to save the list. This selection overrides the Group organization.
 - **Group organization** uses the configured Group organization.
 
-The curated launcher requires a local Space with local panes. A running ghui keeps its launch scope when directories or settings change. Stop and restart it to apply new settings.
+Repository narrowing stays within the configured scope. Changing scope closes an invalidated GitHub view. Reopen **Open GitHub** to apply the settings.
 
-Overview shows authored pull requests, requested reviews, and assigned issues. Actions lists workflow runs across the current scope. Click a run to inspect jobs and step logs. Click the scope header to narrow to one repository; HOME restores the launch scope. Explicit outside-scope views remain available and are marked.
+Use the native screen to:
 
-Use ghui's command palette to open a local checkout, create an isolated Worktrunk review Space, or preview context for a selected Gardn agent. Review creation preserves the original checkout and refuses to reuse a changed or dirty review snapshot.
+- View authored pull requests, requested reviews, and assigned issues in **Overview**.
+- Read pull request and issue conversations, add comments, edit your own comments, manage labels, change pull request draft status, and close items.
+- Review diffs with split or unified views, wrapping, whitespace controls, file navigation, and inline line-range reviews.
+- Merge with repository rules enforced, enable auto-merge, or use the merge queue where available.
+- Inspect scoped **Actions** workflow runs, jobs, and steps, and open log links.
+
+Filters apply to loaded results. Use **More** to load another page. Repository selection never opens an outside-scope view.
+
+The native screen does not offer admin merge, branch deletion, Worktrunk review Spaces, agent handoffs, or an action to open a matching Space.
 
 ## Close and detach safely
 

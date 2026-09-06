@@ -1,5 +1,8 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+pub(crate) mod diff;
+pub(crate) mod domain;
+pub(crate) mod runtime;
+pub(crate) mod screen;
+pub(crate) mod service;
 
 use serde::{Deserialize, Serialize};
 
@@ -110,14 +113,8 @@ impl GithubRepositoryScope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GithubRepositoryLocation {
-    pub repository: GithubRepository,
-    pub local_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubDiscoveryOutcome {
-    Repositories(Vec<GithubRepositoryLocation>),
+    Repositories(Vec<GithubRepository>),
     Empty,
     Failed(String),
 }
@@ -125,7 +122,6 @@ pub enum GithubDiscoveryOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedGithubScope {
     pub repositories: Vec<GithubRepository>,
-    pub repository_paths: BTreeMap<String, PathBuf>,
     pub organization: Option<crate::app::state::GithubOrganization>,
 }
 
@@ -142,27 +138,8 @@ pub fn resolve_github_scope(
             let mut repositories = repositories.clone();
             repositories.sort();
             repositories.dedup();
-            let mut repository_paths = BTreeMap::new();
-            if let GithubDiscoveryOutcome::Repositories(locations) = discovery {
-                let mut locations = locations.clone();
-                locations.sort_by(|left, right| {
-                    left.repository
-                        .cmp(&right.repository)
-                        .then_with(|| left.local_path.cmp(&right.local_path))
-                });
-                for location in locations {
-                    if repositories.contains(&location.repository) {
-                        if let Some(path) = location.local_path {
-                            repository_paths
-                                .entry(location.repository.as_str())
-                                .or_insert(path);
-                        }
-                    }
-                }
-            }
             Ok(ResolvedGithubScope {
                 repositories,
-                repository_paths,
                 organization: None,
             })
         }
@@ -170,7 +147,6 @@ pub fn resolve_github_scope(
             .cloned()
             .map(|organization| ResolvedGithubScope {
                 repositories: Vec::new(),
-                repository_paths: BTreeMap::new(),
                 organization: Some(organization),
             })
             .ok_or_else(|| {
@@ -181,37 +157,20 @@ pub fn resolve_github_scope(
             GithubDiscoveryOutcome::Failed(error) => Err(error.clone()),
             GithubDiscoveryOutcome::Empty => Ok(ResolvedGithubScope {
                 repositories: Vec::new(),
-                repository_paths: BTreeMap::new(),
                 organization: group_organization.cloned(),
             }),
-            GithubDiscoveryOutcome::Repositories(locations) => {
-                let mut sorted = locations.clone();
-                sorted.sort_by(|left, right| {
-                    left.repository
-                        .cmp(&right.repository)
-                        .then_with(|| left.local_path.cmp(&right.local_path))
-                });
-                let mut repositories = Vec::new();
-                let mut repository_paths = BTreeMap::new();
-                for location in sorted {
-                    let key = location.repository.as_str();
-                    if !repositories.contains(&location.repository) {
-                        repositories.push(location.repository);
-                    }
-                    if let Some(path) = location.local_path {
-                        repository_paths.entry(key).or_insert(path);
-                    }
-                }
+            GithubDiscoveryOutcome::Repositories(discovered) => {
+                let mut repositories = discovered.clone();
+                repositories.sort();
+                repositories.dedup();
                 if repositories.is_empty() {
                     return Ok(ResolvedGithubScope {
                         repositories: Vec::new(),
-                        repository_paths: BTreeMap::new(),
                         organization: group_organization.cloned(),
                     });
                 }
                 Ok(ResolvedGithubScope {
                     repositories,
-                    repository_paths,
                     organization: None,
                 })
             }
@@ -245,23 +204,16 @@ mod tests {
         assert_eq!(error, "remote host unavailable");
     }
     #[test]
-    fn selected_scope_keeps_matching_discovered_paths() {
+    fn selected_scope_excludes_other_discovered_repositories() {
         let scope = GithubRepositoryScope::selected_from_input("Acme/One.GIT").unwrap();
         let discovery = GithubDiscoveryOutcome::Repositories(vec![
-            GithubRepositoryLocation {
-                repository: GithubRepository::parse("acme/one").unwrap(),
-                local_path: Some(PathBuf::from("/tmp/one")),
-            },
-            GithubRepositoryLocation {
-                repository: GithubRepository::parse("acme/two").unwrap(),
-                local_path: Some(PathBuf::from("/tmp/two")),
-            },
+            GithubRepository::parse("acme/one").unwrap(),
+            GithubRepository::parse("acme/two").unwrap(),
         ]);
         let resolved = resolve_github_scope(&scope, &discovery, None).unwrap();
         assert_eq!(
-            resolved.repository_paths.get("acme/one"),
-            Some(&PathBuf::from("/tmp/one")),
+            resolved.repositories,
+            vec![GithubRepository::parse("acme/one").unwrap()]
         );
-        assert!(!resolved.repository_paths.contains_key("acme/two"));
     }
 }

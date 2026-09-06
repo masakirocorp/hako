@@ -7,7 +7,6 @@ fn is_system_theme(name: &str) -> bool {
 pub(crate) struct ManagedTerminalThemeTarget {
     pub terminal_id: crate::terminal::TerminalId,
     pub resolved_override: Option<crate::terminal_theme::ResolvedTerminalTheme>,
-    pub child_reload: Option<crate::terminal_theme::TerminalThemeChildReloadPolicy>,
 }
 
 impl AppState {
@@ -50,7 +49,6 @@ impl AppState {
                 targets.push(ManagedTerminalThemeTarget {
                     terminal_id: terminal_id.clone(),
                     resolved_override,
-                    child_reload: binding.child_reload,
                 });
             }
         }
@@ -202,25 +200,11 @@ impl App {
                 self.reconciled_terminal_themes.remove(&target.terminal_id);
                 continue;
             };
-            let existing_runtime_reconciled = self
-                .reconciled_terminal_themes
-                .get(&target.terminal_id)
-                .is_some_and(|(instance_key, _, _)| *instance_key == runtime.instance_key());
-            let next = (
-                runtime.instance_key(),
-                target.resolved_override,
-                target.child_reload,
-            );
+            let next = (runtime.instance_key(), target.resolved_override);
             if self.reconciled_terminal_themes.get(&target.terminal_id) == Some(&next) {
                 continue;
             }
             runtime.set_resolved_terminal_theme_override(target.resolved_override);
-            if existing_runtime_reconciled
-                && target.child_reload
-                    == Some(crate::terminal_theme::TerminalThemeChildReloadPolicy::Ghui)
-            {
-                runtime.signal_child(crate::platform::Signal::User2);
-            }
             self.reconciled_terminal_themes
                 .insert(target.terminal_id, next);
             changed = true;
@@ -258,9 +242,7 @@ fn host_terminal_theme_complete(theme: crate::terminal_theme::TerminalTheme) -> 
 mod tests {
     use crate::app::state::{AppState, Group, Palette};
     use crate::config::{TerminalAccent, ThemeMode};
-    use crate::terminal_theme::{
-        TerminalThemeBinding, TerminalThemeChildReloadPolicy, TerminalThemeSource, ThemeAppearance,
-    };
+    use crate::terminal_theme::{TerminalThemeBinding, TerminalThemeSource, ThemeAppearance};
     use crate::workspace::Workspace;
 
     #[test]
@@ -291,7 +273,6 @@ mod tests {
             .expect("terminal state")
             .terminal_theme_binding = Some(TerminalThemeBinding {
             source: TerminalThemeSource::WorkspacePalette,
-            child_reload: Some(TerminalThemeChildReloadPolicy::Ghui),
         });
 
         let target = state
@@ -306,10 +287,6 @@ mod tests {
         );
 
         assert_eq!(target.resolved_override, Some(expected));
-        assert_eq!(
-            target.child_reload,
-            Some(TerminalThemeChildReloadPolicy::Ghui)
-        );
     }
 
     #[test]
@@ -328,7 +305,6 @@ mod tests {
             .expect("terminal state")
             .terminal_theme_binding = Some(TerminalThemeBinding {
             source: TerminalThemeSource::WorkspacePalette,
-            child_reload: None,
         });
         state.global_theme_mode = ThemeMode::Dark;
         assert!(state.preview_theme_with_mode("system", ThemeMode::Light));

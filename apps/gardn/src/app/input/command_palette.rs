@@ -145,6 +145,10 @@ impl App {
             return;
         };
 
+        if command.action == CommandPaletteAction::OpenGithub {
+            execute_command_palette_action(self, command.action);
+            return;
+        }
         if let Some(kind) = command.action.project_command_kind() {
             leave_command_palette(&mut self.state);
             self.refresh_host_terminal_theme_for(std::time::Duration::from_millis(500))
@@ -811,8 +815,17 @@ pub(crate) fn execute_command_palette_action(app: &mut App, action: CommandPalet
                 Some(crate::app::state::ProjectCommandKind::Editor);
         }
         CommandPaletteAction::OpenGithub => {
-            app.state.request_open_project_command =
-                Some(crate::app::state::ProjectCommandKind::Github);
+            app.with_default_github_view(|app, view| app.open_github_for_view(view));
+            return;
+        }
+        CommandPaletteAction::Github(action) => {
+            app.with_default_github_view(|app, view| {
+                app.execute_client_view_command_palette_action(
+                    view,
+                    CommandPaletteAction::Github(action),
+                )
+            });
+            return;
         }
         CommandPaletteAction::ToggleSidebar => {
             app.state.sidebar_collapsed = !app.state.sidebar_collapsed;

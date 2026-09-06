@@ -1075,7 +1075,6 @@ pub fn signal_processes(pids: &[u32], signal: Signal) {
         Signal::Hangup => libc::SIGHUP,
         Signal::Terminate => libc::SIGTERM,
         Signal::Kill => libc::SIGKILL,
-        Signal::User2 => libc::SIGUSR2,
     };
 
     for &pid in pids {

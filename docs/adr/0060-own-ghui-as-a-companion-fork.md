@@ -1,8 +1,20 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # Own ghui as a separately released companion fork
+
+## Superseded by native GitHub
+
+Gardn now owns GitHub as a built-in, client-local ratatui screen using the existing authenticated `gh` CLI. The companion release pin, launcher, command setting, and separate configuration and theme contract no longer apply. Browser, Review, and Editor remain the three configured project commands.
+
+The native screen retains Space-scoped Overview, pull requests, issues, diffs and reviews, safe merge flows, and Actions. Automatic scope uses discovered repositories, then the Group organization or personal queues when no repositories are discovered. Selected repositories uses exact repository identities. Group organization uses the configured organization. Repository narrowing never widens the base scope. Scope changes close an invalidated view, and reopening applies current settings.
+
+Native GitHub excludes admin merge, branch deletion, outside-scope browsing, Worktrunk review Spaces, and agent handoffs. A matching-Space action is not implemented. Adapted ghui behavior retains Kit Langton's MIT attribution.
+
+## Historical decision
+
+The text below records the superseded companion decision. It is not current installation, launch, or handoff guidance.
 
 Gardn uses `masakirocorp/ghui` as its curated GitHub interface. The fork remains a separate MIT-licensed work. Gardn does not copy ghui source into the Gardn repository or link it into the AGPL binary.
 
@@ -14,7 +26,7 @@ Masakiro publishes ghui from its own repository and release workflow. Release as
 
 Upstream changes enter the fork through explicit merges from `kitlangton/ghui`. Gardn treats upstream as input, not authority. The fork can diverge when Gardn needs a product invariant that upstream does not accept or schedule.
 
-## Current rationale
+## Historical rationale
 
 Gardn is mouse-first. ghui has the interaction model that fits that product direction, but upstream does not currently provide Group-level organization scope or all required launch-only presentation controls. An unpinned executable can ignore those inputs and expose unscoped data. A reviewed fork release makes the behavior and license boundary explicit.
 
@@ -24,7 +36,7 @@ Repository context belongs to a Space rather than its current pane. A shell dire
 
 Review handoffs use Worktrunk to create a separate checkout at the selected pull request commit. They never switch the original Space's checkout. Agent handoffs require an explicit target and send context through the existing Gardn CLI readiness gate. The companion receives an explicit binary and socket for the launching session, with no ambient-session fallback.
 
-## Consequences
+## Historical consequences
 
 A Gardn release that changes the ghui contract must first publish and verify a compatible fork release. The Gardn pin, installation guidance, tests, documentation, and acknowledgment must change together.
 

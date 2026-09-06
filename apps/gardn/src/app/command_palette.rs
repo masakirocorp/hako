@@ -50,6 +50,7 @@ pub(crate) enum CommandPaletteAction {
     OpenReview,
     OpenEditor,
     OpenGithub,
+    Github(crate::github::screen::GithubAction),
     ToggleSidebar,
     ToggleContextBar,
     ZenMode,
@@ -438,7 +439,8 @@ fn command_palette_key_label(state: &AppState, action: &CommandPaletteAction) ->
         CommandPaletteAction::OpenBrowser
         | CommandPaletteAction::OpenReview
         | CommandPaletteAction::OpenEditor
-        | CommandPaletteAction::OpenGithub => None,
+        | CommandPaletteAction::OpenGithub
+        | CommandPaletteAction::Github(_) => None,
         CommandPaletteAction::ToggleSidebar => label(&kb.toggle_sidebar),
         CommandPaletteAction::ToggleContextBar => label(&kb.toggle_context_bar),
         CommandPaletteAction::ZenMode => label(&kb.zen_mode),
@@ -467,6 +469,16 @@ pub(crate) fn command_palette_commands_for_view(
     view: &ClientViewState,
 ) -> Vec<CommandPaletteCommand> {
     let mut commands = command_palette_commands(state);
+    if let Some(screen) = &view.github {
+        commands.extend(
+            screen
+                .contextual_actions()
+                .into_iter()
+                .map(|(action, title)| {
+                    CommandPaletteCommand::new(title, "git", CommandPaletteAction::Github(action))
+                }),
+        );
+    }
     commands.retain(|command| {
         !matches!(
             command.action,

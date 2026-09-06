@@ -65,7 +65,6 @@ pub(crate) enum SettingsAction {
         browser_command: String,
         review_command: String,
         editor_command: String,
-        github_command: String,
         sidebar_width: u16,
         sidebar_min_width: u16,
         sidebar_max_width: u16,
@@ -200,7 +199,6 @@ impl App {
                 browser_command,
                 review_command,
                 editor_command,
-                github_command,
                 sidebar_width,
                 sidebar_min_width,
                 sidebar_max_width,
@@ -235,12 +233,7 @@ impl App {
                 );
                 self.save_new_terminal_cwd(&new_terminal_cwd);
                 self.save_mouse_scroll_lines(mouse_scroll_lines);
-                self.save_commands(
-                    &browser_command,
-                    &review_command,
-                    &editor_command,
-                    &github_command,
-                );
+                self.save_commands(&browser_command, &review_command, &editor_command);
                 self.save_sidebar_widths(sidebar_width, sidebar_min_width, sidebar_max_width);
                 self.save_sidebar_arrangement(sidebar_arrangement);
                 self.save_context_bar_visibility(context_bar_visibility);
@@ -2461,11 +2454,6 @@ fn pending_command(state: &AppState, field: CommandField) -> String {
             .pending_editor_command
             .clone()
             .unwrap_or_else(|| state.editor_command.clone()),
-        CommandField::Github => state
-            .settings
-            .pending_github_command
-            .clone()
-            .unwrap_or_else(|| state.github_command.clone()),
     }
 }
 
@@ -2474,7 +2462,6 @@ fn set_pending_command(state: &mut AppState, field: CommandField, value: String)
         CommandField::Browser => state.settings.pending_browser_command = Some(value),
         CommandField::Review => state.settings.pending_review_command = Some(value),
         CommandField::Editor => state.settings.pending_editor_command = Some(value),
-        CommandField::Github => state.settings.pending_github_command = Some(value),
     }
 }
 
@@ -2487,7 +2474,6 @@ fn reset_all_pending_commands(state: &mut AppState) {
     state.settings.pending_browser_command = Some(defaults.browser);
     state.settings.pending_review_command = Some(defaults.review);
     state.settings.pending_editor_command = Some(defaults.editor);
-    state.settings.pending_github_command = Some(defaults.github);
 }
 
 fn command_field_from_index(index: usize) -> Option<CommandField> {
@@ -3011,7 +2997,6 @@ fn clear_settings_pending(state: &mut AppState) {
     state.settings.pending_browser_command = None;
     state.settings.pending_review_command = None;
     state.settings.pending_editor_command = None;
-    state.settings.pending_github_command = None;
     state.settings.pending_sidebar_width = None;
     state.settings.pending_sidebar_min_width = None;
     state.settings.pending_sidebar_max_width = None;
@@ -3066,7 +3051,6 @@ fn current_settings_action(state: &AppState) -> SettingsAction {
         browser_command: pending_command(state, CommandField::Browser),
         review_command: pending_command(state, CommandField::Review),
         editor_command: pending_command(state, CommandField::Editor),
-        github_command: pending_command(state, CommandField::Github),
         sidebar_width: pending_sidebar_width(state),
         sidebar_min_width: pending_sidebar_min_width(state),
         sidebar_max_width: pending_sidebar_max_width(state),
@@ -4481,7 +4465,6 @@ pub(crate) fn prepare_general_settings_state(
     settings.pending_browser_command = Some(state.browser_command.clone());
     settings.pending_review_command = Some(state.review_command.clone());
     settings.pending_editor_command = Some(state.editor_command.clone());
-    settings.pending_github_command = Some(state.github_command.clone());
     settings.pending_sidebar_width = Some(state.default_sidebar_width);
     settings.pending_sidebar_min_width = Some(state.sidebar_min_width);
     settings.pending_sidebar_max_width = Some(state.sidebar_max_width);
@@ -4578,7 +4561,6 @@ fn reset_settings_for_scoped_editor(state: &AppState, settings: &mut SettingsSta
     settings.pending_browser_command = None;
     settings.pending_review_command = None;
     settings.pending_editor_command = None;
-    settings.pending_github_command = None;
     settings.pending_group_github_organization = None;
     settings.pending_workspace_github_scope = None;
     settings.pending_workspace_github_repositories = None;
@@ -4754,7 +4736,6 @@ pub(crate) fn open_group_settings(state: &mut AppState, group_idx: usize) {
     state.settings.pending_browser_command = None;
     state.settings.pending_review_command = None;
     state.settings.pending_editor_command = None;
-    state.settings.pending_github_command = None;
     state.settings.pending_sidebar_width = None;
     state.settings.pending_sidebar_min_width = None;
     state.settings.pending_sidebar_max_width = None;
@@ -4846,7 +4827,6 @@ pub(crate) fn open_workspace_settings(state: &mut AppState, ws_idx: usize) {
     state.settings.pending_browser_command = None;
     state.settings.pending_review_command = None;
     state.settings.pending_editor_command = None;
-    state.settings.pending_github_command = None;
     state.settings.pending_sidebar_width = None;
     state.settings.pending_sidebar_min_width = None;
     state.settings.pending_sidebar_max_width = None;
@@ -6851,7 +6831,6 @@ mod tests {
                 browser_command: "terminal-browser".to_string(),
                 review_command: "hunk diff --watch".to_string(),
                 editor_command: "fresh .".to_string(),
-                github_command: "ghui".to_string(),
                 sidebar_width: 26,
                 sidebar_min_width: 18,
                 sidebar_max_width: 36,
@@ -7456,7 +7435,6 @@ mod tests {
         state.settings.pending_browser_command = Some("tig".into());
         state.settings.pending_review_command = Some(String::new());
         state.settings.pending_editor_command = Some("hx .".into());
-        state.settings.pending_github_command = Some("custom-github".into());
         state.settings.list.select(
             CommandRowId::Action(CommandAction::Reset(CommandField::Editor)).selection_index(),
         );
@@ -7475,22 +7453,16 @@ mod tests {
             state.settings.pending_editor_command.as_deref(),
             Some("fresh .")
         );
-        assert_eq!(
-            state.settings.pending_github_command.as_deref(),
-            Some("custom-github")
-        );
         assert!(matches!(
             action,
             Some(SettingsAction::SaveSettings {
                 browser_command,
                 review_command,
                 editor_command,
-                github_command,
                 ..
             }) if browser_command == "tig"
                 && review_command.is_empty()
                 && editor_command == "fresh ."
-                && github_command == "custom-github"
         ));
     }
 
@@ -7501,7 +7473,6 @@ mod tests {
         state.settings.pending_browser_command = Some("tig".into());
         state.settings.pending_review_command = Some(String::new());
         state.settings.pending_editor_command = Some("hx .".into());
-        state.settings.pending_github_command = Some("custom-github".into());
         state
             .settings
             .list
@@ -7524,22 +7495,16 @@ mod tests {
             state.settings.pending_editor_command.as_deref(),
             Some("fresh .")
         );
-        assert_eq!(
-            state.settings.pending_github_command.as_deref(),
-            Some("ghui")
-        );
         assert!(matches!(
             action,
             Some(SettingsAction::SaveSettings {
                 browser_command,
                 review_command,
                 editor_command,
-                github_command,
                 ..
             }) if browser_command == "terminal-browser"
                 && review_command == "hunk diff --watch"
                 && editor_command == "fresh ."
-                && github_command == "ghui"
         ));
     }
 
@@ -7565,42 +7530,6 @@ mod tests {
             action,
             Some(SettingsAction::SaveSettings { editor_command, .. })
                 if editor_command == "fresh ."
-        ));
-    }
-    #[test]
-    fn commands_settings_edits_github_command_independently() {
-        let mut state = state_with_workspaces(&["test"]);
-        open_settings_at(&mut state, SettingsSection::Commands);
-        state.settings.list.select(3);
-        state.settings.focused_input = Some(3);
-
-        update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
-        );
-        for ch in "custom-github".chars() {
-            update_settings_state(
-                &mut state,
-                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::empty()),
-            );
-        }
-        let action = update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
-        );
-
-        assert!(matches!(
-            action,
-            Some(SettingsAction::SaveSettings {
-                browser_command,
-                review_command,
-                editor_command,
-                github_command,
-                ..
-            }) if browser_command == "terminal-browser"
-                && review_command == "hunk diff --watch"
-                && editor_command == "fresh ."
-                && github_command == "custom-github"
         ));
     }
 

@@ -1135,33 +1135,6 @@ mod tests {
             Some(6)
         );
     }
-    #[test]
-    fn capture_persists_terminal_theme_binding_without_resolved_colors() {
-        let mut state = state_with_workspaces(&["space"]);
-        let root_pane = state.workspaces[0].tabs[0].root_pane;
-        let terminal_id = state.workspaces[0]
-            .terminal_id(root_pane)
-            .expect("workspace terminal")
-            .clone();
-        let binding = crate::terminal_theme::TerminalThemeBinding {
-            source: crate::terminal_theme::TerminalThemeSource::WorkspacePalette,
-            child_reload: Some(crate::terminal_theme::TerminalThemeChildReloadPolicy::Ghui),
-        };
-        state
-            .terminals
-            .get_mut(&terminal_id)
-            .expect("terminal state")
-            .terminal_theme_binding = Some(binding);
-
-        let snapshot = capture_from_state(&state);
-        let pane = &snapshot.workspaces[0].tabs[0].panes[&root_pane.raw()];
-        assert_eq!(pane.terminal_theme_binding, Some(binding));
-        let serialized = serde_json::to_string(pane).expect("serialize pane snapshot");
-        assert!(serialized.contains(
-            r#""terminal_theme_binding":{"source":"workspace_palette","child_reload":"ghui"}"#
-        ));
-        assert!(!serialized.contains("resolved"));
-    }
 
     #[test]
     fn snapshots_without_terminal_theme_binding_restore_as_unmanaged() {

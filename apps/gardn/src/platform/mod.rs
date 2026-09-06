@@ -33,7 +33,6 @@ pub enum Signal {
     Hangup,
     Terminate,
     Kill,
-    User2,
 }
 
 pub(crate) const fn preserve_legacy_doubled_escape_input() -> bool {
@@ -318,6 +317,45 @@ pub use fallback::*;
 
 pub(crate) fn configure_background_command(command: &mut std::process::Command) {
     configure_background_command_platform(command);
+}
+
+pub(crate) fn configure_cancellable_command(command: &mut std::process::Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+pub(crate) fn terminate_cancellable_child(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        // The isolated group includes credential helpers that can hold pipes open.
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let mut command = crate::noninteractive_process::command("taskkill");
+        command
+            .args(["/F", "/T", "/PID", &child.id().to_string()])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Ok(mut killer) = command.spawn() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while matches!(killer.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let _ = killer.kill();
+            let _ = killer.wait();
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(not(target_os = "windows"))]

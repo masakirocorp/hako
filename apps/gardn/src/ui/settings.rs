@@ -2235,75 +2235,6 @@ mod tests {
     }
 
     #[test]
-    fn commands_settings_show_four_editable_project_roles() {
-        let mut app = AppState::test_new();
-        app.settings.section = SettingsSection::Commands;
-        app.settings.pending_browser_command = Some("terminal-browser".to_string());
-        app.settings.pending_review_command = Some("hunk diff --watch".to_string());
-        app.settings.pending_editor_command = Some("fresh .".to_string());
-        app.settings.pending_github_command = Some("ghui".to_string());
-        app.settings.list.show();
-
-        let area = Rect::new(0, 0, 100, 44);
-        let backend = TestBackend::new(area.width, area.height);
-        let mut terminal = Terminal::new(backend).expect("test backend");
-        terminal
-            .draw(|frame| render_settings_overlay(&app, frame, area))
-            .expect("render Commands settings overlay");
-
-        let buffer = terminal.backend().buffer();
-        let text = buffer_text(buffer, area.width, area.height);
-        let (header_y, header_x) =
-            find_text_cell(&text, "Project Commands").expect("project commands header");
-        let (browser_y, browser_x) =
-            find_text_cell(&text, "Browser ·").expect("browser command field");
-        let (review_y, review_x) = find_text_cell(&text, "Review ·").expect("review command field");
-        let (editor_y, editor_x) = find_text_cell(&text, "Editor ·").expect("editor command field");
-        let (github_y, github_x) = find_text_cell(&text, "GitHub ·").expect("github command field");
-
-        assert_eq!(review_y, browser_y + 4);
-        assert_eq!(editor_y, review_y + 4);
-        assert_eq!(github_y, editor_y + 4);
-        assert_eq!(browser_x, header_x + 1);
-        assert_eq!(review_x, browser_x);
-        assert_eq!(editor_x, browser_x);
-        assert_eq!(github_x, browser_x);
-        assert_eq!(
-            buffer[(header_x, header_y)].style().fg,
-            Some(app.palette.accent)
-        );
-        assert!(buffer[(header_x, header_y)]
-            .style()
-            .add_modifier
-            .contains(Modifier::BOLD));
-        let (browser_value_y, browser_value_x) =
-            find_text_cell(&text, "terminal-browser").expect("browser command value");
-        assert_eq!(browser_value_y, browser_y + 1);
-        assert_eq!(
-            buffer[(browser_value_x, browser_value_y)].style().bg,
-            Some(app.palette.surface0)
-        );
-        assert!(text.contains("terminal-browser"));
-        assert!(text.contains("hunk diff --watch"));
-        assert!(text.contains("fresh ."));
-        assert!(text.contains("ghui"));
-        assert!(text.contains("Reset to terminal-browser"));
-        assert!(text.contains("Reset to hunk diff --watch"));
-        assert!(text.contains("Reset to fresh ."));
-        assert!(text.contains("Reset to ghui"));
-        app.settings.scroll = 4;
-        terminal
-            .draw(|frame| render_settings_overlay(&app, frame, area))
-            .expect("render scrolled Commands settings overlay");
-        let scrolled_text = buffer_text(terminal.backend().buffer(), area.width, area.height);
-        assert!(scrolled_text.contains("Reset All Commands"));
-        assert!(scrolled_text.contains("Restore all four commands to their built-in defaults."));
-        assert!(!text.contains("Selected Repository"));
-        assert!(!text.contains("Selected Project"));
-        assert!(!text.contains("Selected Space"));
-    }
-
-    #[test]
     fn commands_settings_show_edit_cursor_in_input_field() {
         let mut app = AppState::test_new();
         app.settings.section = SettingsSection::Commands;
@@ -3269,14 +3200,7 @@ mod tests {
             .expect("render About settings overlay");
 
         let text = buffer_text(terminal.backend().buffer(), area.width, area.height);
-        for expected in [
-            "Acknowledgments",
-            "ghui",
-            "Copyright (c) 2026 Kit Langton",
-            "MIT License",
-            "Masakiro fork: https://github.com/masakirocorp/ghui",
-            "Upstream: https://github.com/kitlangton/ghui",
-        ] {
+        for expected in ["Copyright (c) 2026 Kit Langton", "MIT License"] {
             assert!(text.contains(expected), "missing About copy: {expected}");
         }
     }

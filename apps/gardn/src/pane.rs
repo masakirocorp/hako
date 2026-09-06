@@ -1438,20 +1438,6 @@ impl PaneRuntime {
         Arc::as_ptr(&self.terminal) as usize
     }
 
-    pub(crate) fn signal_child(&self, signal: crate::platform::Signal) {
-        if self
-            .child_wait_completed
-            .as_ref()
-            .is_some_and(|completed| completed.load(Ordering::Acquire))
-        {
-            return;
-        }
-        let child_pid = self.child_pid();
-        if child_pid != 0 {
-            crate::platform::signal_processes(std::slice::from_ref(&child_pid), signal);
-        }
-    }
-
     pub(crate) fn remote(
         pane_id: PaneId,
         rows: u16,

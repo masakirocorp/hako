@@ -105,12 +105,24 @@ pub enum AppEvent {
         status: crate::detect::manifest_update::ManifestUpdateStatus,
     },
     /// A user interaction requested a write to the invoking rendering client's clipboard.
-    ClipboardWrite { content: Vec<u8> },
+    ClipboardWrite {
+        content: Vec<u8>,
+    },
+    ClientClipboardWrite {
+        view_id: u64,
+        content: Vec<u8>,
+    },
     /// A pane emitted a valid OSC 52 clipboard write.
-    TerminalClipboardWrite { pane_id: PaneId, content: Vec<u8> },
+    TerminalClipboardWrite {
+        pane_id: PaneId,
+        content: Vec<u8>,
+    },
     /// A pane child emitted one or more executable BEL characters.
     /// The host-facing process forwards them to its outer terminal.
-    TerminalBell { pane_id: PaneId, count: u16 },
+    TerminalBell {
+        pane_id: PaneId,
+        count: u16,
+    },
     /// An execution host finished staging a private temporary file.
     ExecutionFileStaged {
         host_id: crate::execution_host::ExecutionHostId,
@@ -120,11 +132,20 @@ pub enum AppEvent {
             Result<crate::execution_host::HostPath, crate::execution_host::protocol::WorkerError>,
     },
     /// A terminal hyperlink requested opening on its rendering client's host.
-    OpenUrl { pane_id: PaneId, url: String },
+    OpenUrl {
+        pane_id: PaneId,
+        url: String,
+    },
+    ClientOpenUrl {
+        view_id: u64,
+        url: String,
+    },
     /// Prefix-mode ASCII input-source intent. The foreground client applies
     /// the host-local switch in server mode; the monolithic app applies it
     /// in-process.
-    PrefixInputSource { active: bool },
+    PrefixInputSource {
+        active: bool,
+    },
     /// Background git status refresh completed for workspaces.
     GitStatusRefreshed {
         results: Vec<WorkspaceGitStatus>,

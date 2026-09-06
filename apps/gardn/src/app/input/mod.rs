@@ -243,6 +243,13 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) -> Option<TerminalKeyTarget> {
+        if self.state.mode == Mode::Github
+            || (self.state.mode == Mode::CommandPalette
+                && self.default_client_view.github.is_some())
+        {
+            self.with_default_github_view(|app, view| app.handle_client_view_modal_key(view, key));
+            return None;
+        }
         if self.default_client_view.popup_pane.is_some() {
             if key.as_key_event().code == KeyCode::Esc {
                 let mut view = self.default_client_view.clone_reconciled(&self.state);
@@ -266,6 +273,7 @@ impl App {
         }
 
         match self.state.mode {
+            Mode::Github => {}
             Mode::Prefix => self.handle_prefix_key(key),
             Mode::Navigate => self.handle_navigate_key(key),
             Mode::Copy => self.handle_copy_mode_key(key),
@@ -369,6 +377,12 @@ impl App {
     }
 
     pub(crate) fn paste_into_active_text_input(&mut self, text: &str) -> bool {
+        if self.state.mode == Mode::Github {
+            if let Some(screen) = self.default_client_view.github.as_mut() {
+                screen.paste(text);
+                return true;
+            }
+        }
         match self.state.mode {
             Mode::RenameWorkspace | Mode::RenameGroup | Mode::RenameTab | Mode::RenamePane => {
                 if self.state.name_input_replace_on_type
@@ -484,6 +498,13 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.state.mode == Mode::Github
+            || (self.state.mode == Mode::CommandPalette
+                && self.default_client_view.github.is_some())
+        {
+            self.with_default_github_view(|app, view| app.handle_mouse_for_view(view, mouse));
+            return;
+        }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pending_url_click = false;
@@ -850,7 +871,6 @@ impl App {
                         browser_command,
                         review_command,
                         editor_command,
-                        github_command,
                         sidebar_width,
                         sidebar_min_width,
                         sidebar_max_width,
@@ -885,12 +905,7 @@ impl App {
                         );
                         self.save_new_terminal_cwd(&new_terminal_cwd);
                         self.save_mouse_scroll_lines(mouse_scroll_lines);
-                        self.save_commands(
-                            &browser_command,
-                            &review_command,
-                            &editor_command,
-                            &github_command,
-                        );
+                        self.save_commands(&browser_command, &review_command, &editor_command);
                         self.save_sidebar_widths(
                             sidebar_width,
                             sidebar_min_width,

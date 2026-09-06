@@ -1283,7 +1283,7 @@ fn command_rows(app: &AppState, settings: &SettingsState) -> Vec<SettingsListRow
     }
     rows.push(SettingsListRow::Spacer);
     rows.push(SettingsListRow::Caption(
-        "Restore all four commands to their built-in defaults.".into(),
+        "Restore all project commands to their built-in defaults.".into(),
     ));
     rows.push(SettingsListRow::Action {
         index: CommandRowId::Action(CommandAction::ResetAll).selection_index(),
@@ -1308,10 +1308,6 @@ fn pending_command_value(app: &AppState, settings: &SettingsState, field: Comman
             .pending_editor_command
             .clone()
             .unwrap_or_else(|| app.editor_command.clone()),
-        CommandField::Github => settings
-            .pending_github_command
-            .clone()
-            .unwrap_or_else(|| app.github_command.clone()),
     }
 }
 
@@ -1324,18 +1320,16 @@ pub(crate) enum CommandField {
     Browser,
     Review,
     Editor,
-    Github,
 }
 
 impl CommandField {
-    pub(crate) const ALL: [Self; 4] = [Self::Browser, Self::Review, Self::Editor, Self::Github];
+    pub(crate) const ALL: [Self; 3] = [Self::Browser, Self::Review, Self::Editor];
 
     const fn title(self) -> &'static str {
         match self {
             Self::Browser => "Browser · Terminal Browser",
             Self::Review => "Review · Review UI",
             Self::Editor => "Editor · Project Editor",
-            Self::Github => "GitHub · Pull Requests and Issues",
         }
     }
 
@@ -1344,7 +1338,6 @@ impl CommandField {
             Self::Browser => "Reset to terminal-browser",
             Self::Review => "Reset to hunk diff --watch",
             Self::Editor => "Reset to fresh .",
-            Self::Github => "Reset to ghui",
         }
     }
 
@@ -1353,7 +1346,6 @@ impl CommandField {
             Self::Browser => CommandsConfig::DEFAULT_BROWSER,
             Self::Review => CommandsConfig::DEFAULT_REVIEW,
             Self::Editor => CommandsConfig::DEFAULT_EDITOR,
-            Self::Github => CommandsConfig::DEFAULT_GITHUB,
         }
     }
 }
@@ -1377,12 +1369,10 @@ impl CommandRowId {
             Self::Field(CommandField::Browser) => 0,
             Self::Field(CommandField::Review) => 1,
             Self::Field(CommandField::Editor) => 2,
-            Self::Field(CommandField::Github) => 3,
-            Self::Action(CommandAction::Reset(CommandField::Browser)) => 4,
-            Self::Action(CommandAction::Reset(CommandField::Review)) => 5,
-            Self::Action(CommandAction::Reset(CommandField::Editor)) => 6,
-            Self::Action(CommandAction::Reset(CommandField::Github)) => 7,
-            Self::Action(CommandAction::ResetAll) => 8,
+            Self::Action(CommandAction::Reset(CommandField::Browser)) => 3,
+            Self::Action(CommandAction::Reset(CommandField::Review)) => 4,
+            Self::Action(CommandAction::Reset(CommandField::Editor)) => 5,
+            Self::Action(CommandAction::ResetAll) => 6,
         }
     }
 
@@ -1391,12 +1381,10 @@ impl CommandRowId {
             0 => Self::Field(CommandField::Browser),
             1 => Self::Field(CommandField::Review),
             2 => Self::Field(CommandField::Editor),
-            3 => Self::Field(CommandField::Github),
-            4 => Self::Action(CommandAction::Reset(CommandField::Browser)),
-            5 => Self::Action(CommandAction::Reset(CommandField::Review)),
-            6 => Self::Action(CommandAction::Reset(CommandField::Editor)),
-            7 => Self::Action(CommandAction::Reset(CommandField::Github)),
-            8 => Self::Action(CommandAction::ResetAll),
+            3 => Self::Action(CommandAction::Reset(CommandField::Browser)),
+            4 => Self::Action(CommandAction::Reset(CommandField::Review)),
+            5 => Self::Action(CommandAction::Reset(CommandField::Editor)),
+            6 => Self::Action(CommandAction::ResetAll),
             _ => return None,
         })
     }
@@ -2306,16 +2294,19 @@ fn toast_rows(app: &AppState, settings: &SettingsState) -> Vec<SettingsListRow> 
 }
 
 fn about_rows() -> Vec<SettingsListRow> {
-    setting_group(
+    let mut rows = setting_group(
         "Acknowledgments",
-        [
-            SettingsListRow::Caption("ghui".into()),
-            SettingsListRow::Caption("Copyright (c) 2026 Kit Langton".into()),
-            SettingsListRow::Caption("MIT License".into()),
-            SettingsListRow::Caption("Masakiro fork: https://github.com/masakirocorp/ghui".into()),
-            SettingsListRow::Caption("Upstream: https://github.com/kitlangton/ghui".into()),
-        ],
-    )
+        [SettingsListRow::Caption(
+            "GitHub workflow behavior adapted from ghui by Kit Langton.".into(),
+        )],
+    );
+    rows.push(SettingsListRow::Spacer);
+    rows.extend(
+        include_str!("github/LICENSE")
+            .lines()
+            .map(|line| SettingsListRow::Caption(line.into())),
+    );
+    rows
 }
 
 fn setting_group(
@@ -2815,37 +2806,6 @@ mod tests {
             } if title.as_ref() == "Kitty Graphics"
                 && description.contains("Reconnect Gardn")
         )));
-    }
-
-    #[test]
-    fn about_rows_are_non_interactive_and_identify_ghui_sources() {
-        let app = AppState::test_new();
-        let rows = rows_for_section(&app, SettingsSection::About).expect("about rows");
-
-        assert!(matches!(
-            rows.first(),
-            Some(SettingsListRow::Header("Acknowledgments"))
-        ));
-        let captions = rows
-            .iter()
-            .filter_map(|row| match row {
-                SettingsListRow::Caption(text) => Some(text.as_ref()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            captions,
-            [
-                "ghui",
-                "Copyright (c) 2026 Kit Langton",
-                "MIT License",
-                "Masakiro fork: https://github.com/masakirocorp/ghui",
-                "Upstream: https://github.com/kitlangton/ghui",
-            ]
-        );
-        assert_eq!(option_count(&rows), 0);
-        assert!((0..visual_row_count(&rows))
-            .all(|visual_row| option_hit_for_visual_row(&rows, visual_row).is_none()));
     }
 
     #[test]

@@ -141,12 +141,15 @@ Pass when each enabled bridge reaches the host once, disabled or missing helpers
 1. Drag workspace or group rows, tabs, and pane borders; scroll every list and modal; test context menus and inline close controls.
 2. Exercise the compact layout at narrow widths.
 3. Discover, rerun, and stop a project command. Focus a real port owner.
-4. Open Browser, Review, Editor, and GitHub from the command palette and workspace menus. Verify that each default tool uses the active Gardn theme.
-5. In a Space with local GitHub checkouts, open GitHub with Automatic scope. Verify that HOME contains only the discovered repositories. Select one repository, then return HOME. The original scope must return.
-6. Save explicit repositories in Space Settings with Enter. Reopen Settings and verify persistence. Stop and restart ghui to apply the new scope. Select Group organization mode and verify that the Group organization applies instead. Renaming the Space or changing directories must not open a duplicate running GitHub tab.
-7. Open Overview and Actions with the mouse. Inspect a run and its step logs. Verify the active terminal palette, visible scrollbars, and unchanged ghui configuration. Create a review Space and verify that the original checkout stays unchanged. Preview an agent handoff and send it only to the selected agent.
+4. Verify that **Settings > Commands** contains only Browser, Review, and Editor. Reset them and confirm `terminal-browser`, `hunk diff --watch`, and `fresh .`. Open each from the command palette and workspace menus.
+5. With an authenticated `gh` CLI, open GitHub from the command palette and workspace menu. Confirm that it opens a native screen without creating a companion terminal pane. Open GitHub in a second app client and confirm that navigation in one client does not move the other.
+6. In a Space with local GitHub checkouts, open GitHub with Automatic scope. Confirm that results stay within the discovered repositories. Narrow to one repository, then remove the narrowing. Confirm that the original scope returns. In a Space without discovered repositories, check the Group organization fallback and, without a Group organization, the signed-in user's queues.
+7. Save exact repositories in **Space Settings > GitHub** with Enter. Reopen Settings and verify persistence. Confirm that changing scope closes the invalidated GitHub view. Reopen GitHub and check the saved scope. Repeat with Group organization mode. Confirm that repository narrowing never exposes an outside-scope repository.
+8. Open Overview, pull requests, issues, and Actions. Apply a filter and confirm that it filters loaded results rather than claiming a complete server search. Use **More** to load another page. Inspect an Actions run, its jobs and steps, and a log link.
+9. In a disposable repository, read a conversation, add a comment, edit your own comment, change labels, and close an issue. Exercise pull request draft state, file navigation, split and unified diffs, wrapping, whitespace controls, and an inline range review. Check safe merge, auto-merge, and queue actions only on disposable pull requests with the required repository settings.
+10. Check native GitHub keyboard and mouse navigation, the active Gardn theme, scrollbars, and narrow-terminal rendering. Confirm that no companion installation, version, config, or theme setup is required. Confirm that admin merge, branch deletion, outside-scope browsing, review Space creation, agent handoffs, and a matching-Space action are absent.
 
-Pass when hit areas match their visuals, compact layouts retain required controls, reruns reuse managed command tabs, port focus selects the owning pane, and each curated tool uses the correct Space scope and theme.
+Pass when hit areas match their visuals, compact layouts retain required controls, reruns reuse managed command tabs, and port focus selects the owning pane. GitHub must keep client navigation independent, enforce the configured Space scope, paginate explicitly, and apply mutations only to the selected target.
 
 ## M12: Sleep, wake, and recovery
 

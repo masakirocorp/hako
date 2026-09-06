@@ -460,15 +460,12 @@ pub struct CommandsConfig {
     pub review: String,
     /// Editor command launched in the selected workspace directory.
     pub editor: String,
-    /// GitHub pull request and issue UI launched in the selected workspace directory.
-    pub github: String,
 }
 
 impl CommandsConfig {
     pub(crate) const DEFAULT_BROWSER: &str = "terminal-browser";
     pub(crate) const DEFAULT_REVIEW: &str = "hunk diff --watch";
     pub(crate) const DEFAULT_EDITOR: &str = "fresh .";
-    pub(crate) const DEFAULT_GITHUB: &str = "ghui";
 }
 
 impl Default for CommandsConfig {
@@ -477,7 +474,6 @@ impl Default for CommandsConfig {
             browser: Self::DEFAULT_BROWSER.to_string(),
             review: Self::DEFAULT_REVIEW.to_string(),
             editor: Self::DEFAULT_EDITOR.to_string(),
-            github: Self::DEFAULT_GITHUB.to_string(),
         }
     }
 }
@@ -1494,13 +1490,7 @@ shell_mode = "non_login"
     }
 
     #[test]
-    fn commands_default_and_parse_as_four_distinct_roles() {
-        let defaults = Config::default().commands;
-        assert_eq!(defaults.browser, "terminal-browser");
-        assert_eq!(defaults.review, "hunk diff --watch");
-        assert_eq!(defaults.editor, "fresh .");
-        assert_eq!(defaults.github, "ghui");
-
+    fn project_commands_parse_as_distinct_roles() {
         let config: Config = toml::from_str(
             r#"
 [commands]
@@ -1510,14 +1500,12 @@ ide = "legacy-editor"
 browser = "custom-browser"
 review = "custom-review"
 editor = "helix ."
-github = "custom-github"
 "#,
         )
         .unwrap();
         assert_eq!(config.commands.browser, "custom-browser");
         assert_eq!(config.commands.review, "custom-review");
         assert_eq!(config.commands.editor, "helix .");
-        assert_eq!(config.commands.github, "custom-github");
     }
 
     #[test]

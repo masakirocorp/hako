@@ -14,6 +14,7 @@ mod api_helpers;
 pub(crate) mod command_palette;
 mod config_io;
 mod creation;
+mod github;
 pub(crate) mod host_label;
 mod ids;
 mod input;
@@ -308,15 +309,12 @@ impl PaneClickState {
 pub struct App {
     pub state: AppState,
     pub(crate) default_client_view: ClientViewState,
+    pub(crate) github_runtime: crate::github::runtime::GithubRuntime,
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
     pub(crate) execution_hosts: Option<crate::execution_host::ExecutionHostManager>,
     reconciled_terminal_themes: std::collections::HashMap<
         crate::terminal::TerminalId,
-        (
-            usize,
-            Option<crate::terminal_theme::ResolvedTerminalTheme>,
-            Option<crate::terminal_theme::TerminalThemeChildReloadPolicy>,
-        ),
+        (usize, Option<crate::terminal_theme::ResolvedTerminalTheme>),
     >,
     /// Uncommitted remote creates awaiting worker ACK. Not part of AppState/snapshot.
     pub(crate) pending_remote_creations: std::collections::HashMap<
@@ -1035,7 +1033,6 @@ impl App {
             browser_command: config.commands.browser.clone(),
             review_command: config.commands.review.clone(),
             editor_command: config.commands.editor.clone(),
-            github_command: config.commands.github.clone(),
             pane_border_agent_info: config.ui.pane_border_agent_info,
             status_indicators: config.ui.status_indicators,
             pane_borders: config.ui.pane_borders,
@@ -1119,7 +1116,6 @@ impl App {
                 pending_browser_command: None,
                 pending_review_command: None,
                 pending_editor_command: None,
-                pending_github_command: None,
                 pending_sidebar_width: None,
                 pending_sidebar_min_width: None,
                 pending_sidebar_max_width: None,
@@ -1388,6 +1384,7 @@ impl App {
             loop_stats: loop_stats::LoopStats::from_env(),
 
             detached_custom_command_children: Vec::new(),
+            github_runtime: crate::github::runtime::GithubRuntime::default(),
             input_leases: input::InputLeaseTable::default(),
             api_rx,
             event_hub,
@@ -2146,6 +2143,11 @@ impl App {
             let schedule_started = Instant::now();
 
             let now = Instant::now();
+            needs_render |= self.poll_github();
+            if self.default_client_view.github.is_some() {
+                needs_render |=
+                    self.with_default_github_view(|app, view| app.pump_github_for_view(view));
+            }
             if self.poll_execution_hosts(now) {
                 needs_render = true;
             }
@@ -2164,31 +2166,47 @@ impl App {
             }
 
             if let Some(kind) = self.state.request_open_project_command.take() {
-                self.refresh_host_terminal_theme_for(Duration::from_millis(500))
-                    .await;
-                let target_workspace = self.state.request_open_project_command_workspace.take();
-                let previous_toast = self.state.toast.clone();
-                let result = if let Some(ws_idx) = target_workspace {
-                    self.state.open_project_command_for_workspace(
-                        &mut self.terminal_runtimes,
-                        ws_idx,
-                        kind,
-                    )
-                } else {
-                    self.state
-                        .open_project_command(&mut self.terminal_runtimes, kind)
-                };
-                if let Err(err) = result {
-                    self.state.toast = Some(crate::app::state::ToastNotification {
-                        kind: crate::app::state::ToastKind::NeedsAttention,
-                        title: format!("{} Command Failed", self.state.project_command_role(kind)),
-                        context: err,
-                        position: None,
-                        target: None,
+                if kind == state::ProjectCommandKind::Github {
+                    let workspace = self
+                        .state
+                        .request_open_project_command_workspace
+                        .take()
+                        .or(self.state.active);
+                    self.with_default_github_view(|app, view| {
+                        view.active_workspace = workspace;
+                        app.open_github_for_view(view);
                     });
-                    self.sync_toast_deadline(previous_toast);
+                    needs_render = true;
+                } else {
+                    self.refresh_host_terminal_theme_for(Duration::from_millis(500))
+                        .await;
+                    let target_workspace = self.state.request_open_project_command_workspace.take();
+                    let previous_toast = self.state.toast.clone();
+                    let result = if let Some(ws_idx) = target_workspace {
+                        self.state.open_project_command_for_workspace(
+                            &mut self.terminal_runtimes,
+                            ws_idx,
+                            kind,
+                        )
+                    } else {
+                        self.state
+                            .open_project_command(&mut self.terminal_runtimes, kind)
+                    };
+                    if let Err(err) = result {
+                        self.state.toast = Some(crate::app::state::ToastNotification {
+                            kind: crate::app::state::ToastKind::NeedsAttention,
+                            title: format!(
+                                "{} Command Failed",
+                                self.state.project_command_role(kind)
+                            ),
+                            context: err,
+                            position: None,
+                            target: None,
+                        });
+                        self.sync_toast_deadline(previous_toast);
+                    }
+                    needs_render = true;
                 }
-                needs_render = true;
             }
 
             if self.reconcile_terminal_themes() {
@@ -2256,11 +2274,27 @@ impl App {
                                 area,
                             );
                         }
-                        crate::ui::render_with_runtime_registry(
-                            &self.state,
-                            &self.terminal_runtimes,
-                            frame,
-                        );
+                        if matches!(self.state.mode, Mode::Github | Mode::CommandPalette)
+                            && self.default_client_view.github.is_some()
+                        {
+                            self.default_client_view.mode = self.state.mode;
+                            self.default_client_view.computed = self.state.view.clone();
+                            if let Some(screen) = self.default_client_view.github.as_mut() {
+                                screen.compute(area);
+                            }
+                            crate::ui::render_with_runtime_registry_for_view(
+                                &self.state,
+                                &self.default_client_view,
+                                &self.terminal_runtimes,
+                                frame,
+                            );
+                        } else {
+                            crate::ui::render_with_runtime_registry(
+                                &self.state,
+                                &self.terminal_runtimes,
+                                frame,
+                            );
+                        }
                         if let Some(line) = overlay.as_deref() {
                             crate::ui::render_loop_debug(frame, line, overlay_bg, overlay_fg);
                         }
@@ -2294,6 +2328,14 @@ impl App {
             }
 
             let next_deadline = self.next_loop_deadline(now, needs_render);
+            let next_deadline = if self.github_has_pending() {
+                let github_deadline = now + Duration::from_millis(50);
+                Some(
+                    next_deadline.map_or(github_deadline, |deadline| deadline.min(github_deadline)),
+                )
+            } else {
+                next_deadline
+            };
             let event = {
                 let input_rx = self.input_rx.as_mut();
                 tokio::select! {
@@ -2614,9 +2656,6 @@ impl App {
             self.state
                 .editor_command
                 .clone_from(&config.commands.editor);
-            self.state
-                .github_command
-                .clone_from(&config.commands.github);
         }
 
         if !invalid_section("ui") {
@@ -4091,6 +4130,14 @@ impl App {
     ) {
         let key = raw_key.as_key_event();
         match client_view.mode {
+            Mode::Github => {
+                let effects = client_view
+                    .github
+                    .as_mut()
+                    .map(|screen| screen.handle_key(key))
+                    .unwrap_or_default();
+                self.apply_github_effects(client_view, effects);
+            }
             Mode::RenameWorkspace | Mode::RenameGroup | Mode::RenameTab | Mode::RenamePane => {
                 self.handle_client_view_rename_key(client_view, key);
             }
@@ -5748,7 +5795,28 @@ impl App {
         client_view: &mut ClientViewState,
         action: crate::app::command_palette::CommandPaletteAction,
     ) {
+        if client_view.github.is_some()
+            && !matches!(
+                &action,
+                crate::app::command_palette::CommandPaletteAction::Github(_)
+                    | crate::app::command_palette::CommandPaletteAction::OpenGithub
+            )
+        {
+            self.close_github_for_view(client_view);
+        }
         match action {
+            crate::app::command_palette::CommandPaletteAction::Github(action) => {
+                client_view.mode = Mode::Github;
+                let effects = client_view
+                    .github
+                    .as_mut()
+                    .map(|screen| screen.activate(action))
+                    .unwrap_or_default();
+                self.apply_github_effects(client_view, effects);
+            }
+            crate::app::command_palette::CommandPaletteAction::OpenGithub => {
+                self.open_github_for_view(client_view);
+            }
             crate::app::command_palette::CommandPaletteAction::OpenNavigator => {
                 self.execute_client_view_navigate_action(
                     client_view,
@@ -5919,8 +5987,7 @@ impl App {
             }
             action @ (crate::app::command_palette::CommandPaletteAction::OpenBrowser
             | crate::app::command_palette::CommandPaletteAction::OpenReview
-            | crate::app::command_palette::CommandPaletteAction::OpenEditor
-            | crate::app::command_palette::CommandPaletteAction::OpenGithub) => {
+            | crate::app::command_palette::CommandPaletteAction::OpenEditor) => {
                 let Some(kind) = action.project_command_kind() else {
                     unreachable!("project command action matched above");
                 };
@@ -6835,6 +6902,10 @@ impl App {
                     Some("github") => crate::app::state::ProjectCommandKind::Github,
                     _ => unreachable!("project command menu item matched above"),
                 };
+                if kind == state::ProjectCommandKind::Github {
+                    self.open_github_for_view(client_view);
+                    return;
+                }
                 let pending_tab = self.state.pending_project_command_tab_for_workspace(
                     &self.terminal_runtimes,
                     ws_idx,
@@ -7837,6 +7908,12 @@ impl App {
 
     fn paste_into_client_view_text_input(client_view: &mut ClientViewState, text: &str) -> bool {
         match client_view.mode {
+            Mode::Github => {
+                if let Some(screen) = client_view.github.as_mut() {
+                    screen.paste(text);
+                }
+                true
+            }
             Mode::RenameWorkspace | Mode::RenameGroup | Mode::RenameTab | Mode::RenamePane => {
                 if client_view.name_input_replace_on_type
                     && !(client_view.mode == Mode::RenameGroup
@@ -8230,6 +8307,15 @@ impl App {
         mouse: crossterm::event::MouseEvent,
     ) {
         let mouse = self.state.normalize_host_mouse_event(mouse);
+        if client_view.mode == Mode::Github {
+            let effects = client_view
+                .github
+                .as_mut()
+                .map(|screen| screen.handle_mouse(mouse))
+                .unwrap_or_default();
+            self.apply_github_effects(client_view, effects);
+            return;
+        }
         if let Some(view) = client_view.tab_canvas_view {
             self.state.remap_host_pointer_pixels_to_canvas(view);
         }
@@ -12525,11 +12611,7 @@ impl App {
 
     fn leave_client_view_command_mode(client_view: &mut ClientViewState) {
         client_view.mobile_agents_expanded = false;
-        client_view.mode = if client_view.active_workspace.is_some() {
-            Mode::Terminal
-        } else {
-            Mode::Navigate
-        };
+        client_view.return_to_active_workspace_mode();
     }
 
     fn leave_client_view_focus_pane_mode(
@@ -12601,6 +12683,13 @@ impl App {
     /// Uses the standalone handler functions that work on `&mut AppState`
     /// since the server doesn't have the async context of the monolithic App.
     fn handle_non_terminal_key_headless(&mut self, key: crate::input::TerminalKey) {
+        if self.state.mode == Mode::Github
+            || (self.state.mode == Mode::CommandPalette
+                && self.default_client_view.github.is_some())
+        {
+            self.with_default_github_view(|app, view| app.handle_client_view_modal_key(view, key));
+            return;
+        }
         let key_event = key.as_key_event();
         if input::modal_paste_target_active(&self.state)
             && input::is_modal_paste_shortcut(&key_event)
@@ -12612,6 +12701,7 @@ impl App {
         }
 
         match self.state.mode {
+            Mode::Github => {}
             Mode::Prefix => {
                 self.handle_prefix_key(key);
             }
@@ -13107,6 +13197,51 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         )
+    }
+
+    #[test]
+    fn github_palette_escape_and_scope_invalidation_stay_client_local() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        app.state.active = Some(0);
+        app.state.mode = Mode::Terminal;
+        let scope = crate::github::ResolvedGithubScope {
+            repositories: Vec::new(),
+            organization: None,
+        };
+        let mut first = ClientViewState::from_default_client_state(&app.state);
+        let mut second = ClientViewState::from_default_client_state(&app.state);
+        for (index, view) in [(0, &mut first), (1, &mut second)] {
+            view.active_workspace = Some(index);
+            view.github_workspace_id = Some(app.state.workspaces[index].id.clone());
+            view.github_scope_settings =
+                Some((crate::github::GithubRepositoryScope::Automatic, None));
+            view.github = Some(crate::github::screen::GithubScreen::new(
+                scope.clone(),
+                "GitHub".into(),
+            ));
+            view.mode = Mode::CommandPalette;
+        }
+        app.route_client_events_for_view(
+            &mut first,
+            vec![raw_key(
+                KeyCode::Esc,
+                KeyModifiers::empty(),
+                KeyEventKind::Press,
+            )],
+            false,
+        );
+        assert_eq!(first.mode, Mode::Github);
+        assert_eq!(second.mode, Mode::CommandPalette);
+        app.state.workspaces[0].github_scope =
+            crate::github::GithubRepositoryScope::GroupOrganization;
+        assert!(app.pump_github_for_view(&mut first));
+        assert!(first.github.is_none());
+        assert_eq!(first.mode, Mode::Terminal);
+        assert!(second.github.is_some());
+        assert_eq!(second.mode, Mode::CommandPalette);
+        assert!(app.state.request_open_project_command.is_none());
+        app.close_github_for_view(&mut second);
     }
 
     #[test]
@@ -14443,7 +14578,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[commands]\nbrowser = \"custom-browser\"\nreview = \"custom-review\"\neditor = \"hx .\"\ngithub = \"custom-github\"\n",
+            "[commands]\nbrowser = \"custom-browser\"\nreview = \"custom-review\"\neditor = \"hx .\"\n",
         )
         .unwrap();
         let _config_path_env =
@@ -14456,7 +14591,6 @@ mod tests {
         assert_eq!(app.state.browser_command, "custom-browser");
         assert_eq!(app.state.review_command, "custom-review");
         assert_eq!(app.state.editor_command, "hx .");
-        assert_eq!(app.state.github_command, "custom-github");
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -25137,7 +25271,6 @@ command = "printf literal > '{}'"
             ("editor", state::ProjectCommandKind::Editor),
             ("browser", state::ProjectCommandKind::Browser),
             ("review", state::ProjectCommandKind::Review),
-            ("github", state::ProjectCommandKind::Github),
         ] {
             let mut app = test_app();
             app.state.workspaces = vec![Workspace::test_new("shell")];

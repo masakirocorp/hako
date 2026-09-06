@@ -89,7 +89,9 @@ impl App {
             );
             return;
         }
-        if let AppEvent::ClipboardWrite { content } = ev {
+        if let AppEvent::ClipboardWrite { content }
+        | AppEvent::ClientClipboardWrite { content, .. } = ev
+        {
             #[cfg(not(test))]
             crate::selection::write_osc52_bytes(&content);
             #[cfg(test)]
@@ -112,6 +114,15 @@ impl App {
                 crate::terminal_effects::write_terminal_bells(&mut std::io::stdout(), count)
             {
                 tracing::warn!(err = %err, "failed to emit terminal bell");
+            }
+            return;
+        }
+
+        if let AppEvent::ClientOpenUrl { url, .. } = ev {
+            if crate::app::rendering_client_may_open_url(&url, false) {
+                if let Err(error) = crate::platform::open_url(&url) {
+                    tracing::warn!(%error, "failed to open client URL");
+                }
             }
             return;
         }

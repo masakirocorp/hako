@@ -12,6 +12,7 @@ mod command_palette;
 mod config_diagnostics;
 mod dialogs;
 pub(crate) mod git_repo_picker;
+pub(crate) mod github;
 mod keybind_help;
 mod menus;
 mod mobile;
@@ -944,6 +945,9 @@ fn compute_view_for_client_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
+    if let Some(screen) = client_view.github.as_mut() {
+        screen.compute(area);
+    }
     if is_mobile_width(area, app.mobile_width_threshold) {
         compute_mobile_view_for_client(
             app,
@@ -1674,7 +1678,7 @@ pub fn render_with_runtime_registry(
         Mode::AgentProfilePicker => render_agent_profile_picker_overlay(app, frame),
         Mode::GitRepoPicker => render_git_repo_picker_overlay(app, frame),
         Mode::ConfigDiagnostics => render_config_diagnostics_overlay(app, frame),
-        Mode::Terminal => {}
+        Mode::Terminal | Mode::Github => {}
     }
     // Notifications remain legible above interactive overlays.
     render_notifications(app, frame, terminal_area);
@@ -1757,6 +1761,11 @@ pub fn render_with_runtime_registry_for_view(
         render_collapsed_sidebar_hover_for_view(app, client_view, frame);
     }
     render_context_bar(app, &client_view.computed.context_bar, frame);
+    if matches!(client_view.mode, Mode::Github | Mode::CommandPalette) {
+        if let Some(screen) = &client_view.github {
+            github::render(screen, &app.palette, frame);
+        }
+    }
 
     match client_view.mode {
         Mode::Onboarding => render_onboarding_overlay(app, frame, frame.area()),
@@ -1803,7 +1812,7 @@ pub fn render_with_runtime_registry_for_view(
         Mode::ConfigDiagnostics => {
             render_config_diagnostics_overlay_for_view(app, client_view, frame)
         }
-        Mode::Terminal => {}
+        Mode::Terminal | Mode::Github => {}
     }
     render_notifications_for_view(app, client_view, frame, terminal_area);
     if client_view.popup_pane.is_some() {

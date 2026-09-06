@@ -27,23 +27,14 @@ pub(crate) enum TerminalThemeSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TerminalThemeChildReloadPolicy {
-    Ghui,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TerminalThemeBinding {
     pub source: TerminalThemeSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub child_reload: Option<TerminalThemeChildReloadPolicy>,
 }
 
 impl TerminalThemeBinding {
-    pub const fn workspace_palette(child_reload: Option<TerminalThemeChildReloadPolicy>) -> Self {
+    pub const fn workspace_palette() -> Self {
         Self {
             source: TerminalThemeSource::WorkspacePalette,
-            child_reload,
         }
     }
 }

@@ -1568,7 +1568,7 @@ fn session_processes_from_snapshot(child_pid: u32, snapshot: &ProcessSnapshot) -
 }
 
 pub fn signal_processes(pids: &[u32], signal: Signal) {
-    if matches!(signal, Signal::Hangup | Signal::User2) {
+    if matches!(signal, Signal::Hangup) {
         return;
     }
 

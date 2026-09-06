@@ -138,12 +138,10 @@ export default function HomePage() {
               title: "Open project tools",
               copy: (
                 <>
-                  Choose <span className="gardn-command">open browser</span>,{" "}
-                  <span className="gardn-command">open review</span>,{" "}
-                  <span className="gardn-command">open editor</span>, or{" "}
-                  <span className="gardn-command">open GitHub</span>. Gardn launches each in the
-                  workspace context, themes the defaults, and applies the group&apos;s GitHub
-                  organization to GitHub.
+                  Open Browser, Review, and Editor in managed tool tabs. Choose{" "}
+                  <span className="gardn-command">open GitHub</span> for the native GitHub screen,
+                  using your existing <span className="gardn-command">gh</span> authentication and
+                  the Space&apos;s repository scope.
                 </>
               ),
               href: "/docs/guides/workspaces-and-navigation#open-curated-project-tools",
@@ -195,9 +193,9 @@ export default function HomePage() {
               title: "Curated project tools",
               copy: (
                 <>
-                  Open Browser, Review, Editor, and GitHub in managed tabs. The defaults follow the
-                  active Gardn theme, and the Masakiro ghui fork provides a mouse-aware GitHub
-                  interface scoped to the Space&apos;s repositories or Group organization.
+                  Open Browser, Review, and Editor in managed tabs. Use native GitHub for pull
+                  requests, issues, and Actions scoped to the Space&apos;s repositories or Group
+                  organization, with Gardn&apos;s theme and existing gh authentication.
                 </>
               ),
               href: "/docs/guides/workspaces-and-navigation#open-curated-project-tools",

@@ -354,6 +354,12 @@ pub(crate) struct ClientViewState {
     pub(crate) navigator: NavigatorState,
     pub(crate) agent_profile_picker: AgentProfilePickerState,
     pub(crate) git_repo_picker: GitRepoPickerState,
+    pub(crate) github: Option<crate::github::screen::GithubScreen>,
+    pub(crate) github_workspace_id: Option<String>,
+    pub(crate) github_scope_settings: Option<(
+        crate::github::GithubRepositoryScope,
+        Option<crate::app::state::GithubOrganization>,
+    )>,
     pub(crate) context_menu: Option<ContextMenuState>,
     pub(crate) selection: Option<crate::selection::Selection>,
     pub(crate) selection_autoscroll: Option<SelectionAutoscroll>,
@@ -466,6 +472,9 @@ impl ClientViewState {
             navigator: state.navigator.clone(),
             agent_profile_picker: state.agent_profile_picker.clone(),
             git_repo_picker: state.git_repo_picker.clone(),
+            github: None,
+            github_workspace_id: None,
+            github_scope_settings: None,
             context_menu: state.context_menu.clone(),
             selection: state.selection.clone(),
             selection_autoscroll: state.selection_autoscroll.clone(),
@@ -1269,6 +1278,10 @@ impl ClientViewState {
     }
 
     pub(crate) fn return_to_active_workspace_mode(&mut self) {
+        if self.github.is_some() {
+            self.mode = Mode::Github;
+            return;
+        }
         self.mode = if self.active_workspace.is_some() {
             Mode::Terminal
         } else {
