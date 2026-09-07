@@ -10,6 +10,20 @@ use crate::layout::{Node, PaneId, TileLayout};
 use crate::pane::{PaneLaunchEnv, PaneState};
 use crate::terminal::{TerminalId, TerminalRuntime, TerminalRuntimeRegistry, TerminalState};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TabRole {
+    #[default]
+    Terminal,
+    Github,
+}
+
+impl TabRole {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Terminal)
+    }
+}
+
 pub(crate) type DetachedPane = (PaneId, TerminalId);
 
 pub(crate) struct MovedPane {
@@ -54,6 +68,7 @@ enum NewTabCommand<'a> {
 pub struct Tab {
     pub custom_name: Option<String>,
     pub number: usize,
+    pub role: TabRole,
     /// Identity source for this tab's pane tree.
     pub root_pane: PaneId,
     pub layout: TileLayout,
@@ -72,8 +87,9 @@ impl Clone for Tab {
         Self {
             custom_name: self.custom_name.clone(),
             number: self.number,
-            root_pane: self.root_pane,
+            role: self.role,
             layout: self.layout.clone(),
+            root_pane: self.root_pane,
             panes: self.panes.clone(),
             #[cfg(test)]
             runtimes: HashMap::new(),
@@ -231,6 +247,7 @@ impl Tab {
         Self {
             custom_name: None,
             number,
+            role: TabRole::Terminal,
             root_pane,
             layout,
             panes,
@@ -368,6 +385,7 @@ impl Tab {
             Self {
                 custom_name: None,
                 number,
+                role: TabRole::Terminal,
                 root_pane: root_id,
                 layout,
                 panes,
@@ -411,6 +429,7 @@ impl Tab {
         Self {
             custom_name,
             number,
+            role: TabRole::Terminal,
             root_pane: pane_id,
             layout: TileLayout::from_saved(Node::Pane(pane_id), pane_id),
             panes,

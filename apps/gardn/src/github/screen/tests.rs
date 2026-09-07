@@ -262,7 +262,7 @@ fn queue_picker_selects_only_filters_supported_by_the_current_tab() {
     let mut screen = queued_screen();
     let area = Rect::new(9, 4, 100, 30);
     let before = render_pane(&mut screen, area);
-    let trigger = text_row(&before, "Queue:");
+    let trigger = text_row(&before, "…");
     let effects = screen.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: trigger.0,
@@ -272,6 +272,14 @@ fn queue_picker_selects_only_filters_supported_by_the_current_tab() {
     assert!(!effects
         .iter()
         .any(|effect| matches!(effect, GithubEffect::OpenPalette)));
+    let overflow = render_pane(&mut screen, area);
+    let queue = text_row(&overflow, "Choose queue");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: queue.0,
+        row: queue.1,
+        modifiers: KeyModifiers::NONE,
+    });
     let menu = render_pane(&mut screen, area);
     text_row(&menu, "Review requested");
     let all = text_row(&menu, "All");
@@ -284,11 +292,26 @@ fn queue_picker_selects_only_filters_supported_by_the_current_tab() {
     assert!(
         matches!(&screen.drain_requests()[..], [GithubRequest::Queue(request)] if request.queue == Queue::All && request.kind == ItemKind::PullRequest)
     );
-    text_row(&render_pane(&mut screen, area), "Queue: All");
+    assert_eq!(screen.queue, Queue::All);
 
     screen.activate(GithubAction::Tab(GithubTab::Issues));
     screen.drain_requests();
-    screen.activate(GithubAction::ChooseQueue);
+    let issue_buffer = render_pane(&mut screen, area);
+    let issue_trigger = text_row(&issue_buffer, "…");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: issue_trigger.0,
+        row: issue_trigger.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    let issue_overflow = render_pane(&mut screen, area);
+    let issue_queue = text_row(&issue_overflow, "Choose queue");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: issue_queue.0,
+        row: issue_queue.1,
+        modifiers: KeyModifiers::NONE,
+    });
     let menu = render_pane(&mut screen, area);
     let menu_text: String = menu.content.iter().map(|cell| cell.symbol()).collect();
     assert!(!menu_text.contains("Review requested"));
@@ -298,7 +321,7 @@ fn queue_picker_selects_only_filters_supported_by_the_current_tab() {
     assert!(
         matches!(&screen.drain_requests()[..], [GithubRequest::Queue(request)] if request.queue == Queue::Assigned && request.kind == ItemKind::Issue)
     );
-    text_row(&render_pane(&mut screen, area), "Queue: Assigned");
+    assert_eq!(screen.queue, Queue::Assigned);
 }
 
 #[test]
@@ -328,7 +351,7 @@ fn pane_content_has_margins_group_gaps_and_clickable_metadata() {
             })),
         );
         let buffer = render_pane(&mut screen, area);
-        let (actions_x, actions_y) = text_row(&buffer, "Actions…");
+        let (actions_x, actions_y) = text_row(&buffer, "…");
         let effects = screen.handle_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: actions_x,
@@ -339,11 +362,14 @@ fn pane_content_has_margins_group_gaps_and_clickable_metadata() {
             .iter()
             .any(|effect| matches!(effect, GithubEffect::OpenPalette)));
         let menu = render_pane(&mut screen, area);
-        text_row(&menu, "Filter loaded results");
+        text_row(&buffer, "Refresh");
+        text_row(&buffer, "Filter");
+        let menu_text: String = menu.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(!menu_text.contains("Filter loaded results"));
         screen.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         let (title_x, title_y) = text_row(&buffer, "GitHub");
         assert!(title_x > area.x && title_y > area.y);
-        let (_, actions_y) = text_row(&buffer, "Actions…");
+        let (_, actions_y) = text_row(&buffer, "…");
         let (heading_x, heading_y) = text_row(&buffer, "Authored pull requests");
         assert!(heading_x > area.x && heading_y > actions_y + 1);
         let (_, second_heading) = text_row(&buffer, "Review requested");
@@ -375,6 +401,74 @@ fn pane_content_has_margins_group_gaps_and_clickable_metadata() {
         assert!(
             matches!(&screen.drain_requests()[..], [GithubRequest::Details(key)] if key.number == 2)
         );
+    }
+}
+
+#[test]
+fn github_controls_use_one_adaptive_row_and_nonduplicating_overflow() {
+    for width in [100, 60, 40] {
+        let mut screen = queued_screen();
+        let area = Rect::new(0, 0, width, 20);
+        render_pane(&mut screen, area);
+        let trigger = screen
+            .geometry
+            .controls
+            .iter()
+            .find(|control| control.action == GithubAction::ChooseAction)
+            .expect("overflow trigger");
+        let row = trigger.area.y;
+        let row_controls: Vec<_> = screen
+            .geometry
+            .controls
+            .iter()
+            .filter(|control| control.area.y == row)
+            .collect();
+        assert_eq!(
+            row_controls
+                .iter()
+                .filter(|control| matches!(control.action, GithubAction::Tab(_)))
+                .count(),
+            GithubTab::ALL.len()
+        );
+        assert!(screen
+            .geometry
+            .controls
+            .iter()
+            .filter(|control| control.action != GithubAction::CloseScreen)
+            .all(|control| control.area.y == row));
+        assert!(row_controls
+            .iter()
+            .any(|control| control.action == GithubAction::ChooseAction));
+        let refresh_visible = row_controls
+            .iter()
+            .any(|control| control.action == GithubAction::Refresh);
+        let filter_visible = row_controls
+            .iter()
+            .any(|control| control.action == GithubAction::Filter);
+        if width >= 60 {
+            assert!(refresh_visible);
+            assert!(filter_visible);
+        } else {
+            assert!(refresh_visible);
+            assert!(!filter_visible);
+        }
+        screen.activate(GithubAction::ChooseAction);
+        let menu = render_pane(&mut screen, area);
+        let overflow = &screen.menu.as_ref().expect("overflow menu").items;
+        assert_eq!(
+            overflow
+                .iter()
+                .any(|(action, _)| *action == GithubAction::Refresh),
+            !refresh_visible
+        );
+        assert_eq!(
+            overflow
+                .iter()
+                .any(|(action, _)| *action == GithubAction::Filter),
+            !filter_visible
+        );
+        let menu_text: String = menu.content.iter().map(|cell| cell.symbol()).collect();
+        assert_eq!(menu_text.contains("Filter loaded results"), !filter_visible);
     }
 }
 
@@ -489,7 +583,7 @@ fn actions_menu_opens_contextual_commands_without_the_global_palette() {
     let mut screen = loaded_screen();
     let area = Rect::new(9, 4, 100, 45);
     let buffer = render_pane(&mut screen, area);
-    let (x, y) = text_row(&buffer, "Actions…");
+    let (x, y) = text_row(&buffer, "…");
     let effects = screen.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: x,
@@ -523,7 +617,7 @@ fn actions_menu_keyboard_selection_and_escape_stay_in_github() {
     let mut screen = loaded_screen();
     let area = Rect::new(0, 0, 100, 40);
     let buffer = render_pane(&mut screen, area);
-    let (x, y) = text_row(&buffer, "Actions…");
+    let (x, y) = text_row(&buffer, "…");
     screen.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: x,
@@ -535,7 +629,7 @@ fn actions_menu_keyboard_selection_and_escape_stay_in_github() {
     assert!(matches!(screen.dialog, Some(Dialog::Filter(_))));
     screen.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     let buffer = render_pane(&mut screen, area);
-    let (x, y) = text_row(&buffer, "Actions…");
+    let (x, y) = text_row(&buffer, "…");
     screen.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: x,
@@ -573,7 +667,7 @@ fn compact_diff_keeps_content_and_all_actions_reachable() {
     assert!(text.contains("old value"));
     assert!(text.contains("new value"));
     let buffer = render_pane(&mut screen, Rect::new(0, 0, 40, 10));
-    let (x, y) = text_row(&buffer, "Actions…");
+    let (x, y) = text_row(&buffer, "…");
     let effects = screen.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: x,
@@ -720,7 +814,228 @@ fn explicit_refresh_loads_diff_against_the_new_head() {
         matches!(&screen.drain_requests()[..], [GithubRequest::Diff { head_sha, .. }] if head_sha == &"b".repeat(40))
     );
 }
+#[test]
+fn roomy_layout_separates_header_toolbar_and_content_without_bottom_padding() {
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: Vec::new(),
+        organization: None,
+    });
+    let area = Rect::new(0, 0, 100, 24);
+    screen.compute(area);
+    let toolbar = screen
+        .geometry
+        .controls
+        .iter()
+        .find(|control| control.action == GithubAction::Tab(GithubTab::Overview))
+        .expect("Overview toolbar control");
+    assert_eq!(toolbar.area.y, screen.geometry.header.y + 2);
+    assert_eq!(screen.geometry.list.y, toolbar.area.y + 2);
+    assert_eq!(screen.geometry.status.bottom(), area.bottom());
+}
 
+#[test]
+fn breadcrumb_opens_with_mouse_and_compact_keyboard_navigation() {
+    let default_repository = GithubRepository::parse("example/project").expect("valid repository");
+    let default = ResolvedGithubScope {
+        repositories: vec![default_repository.clone()],
+        organization: None,
+    };
+    let mut screen = GithubScreen::new(default.clone());
+    let area = Rect::new(0, 0, 100, 24);
+    let buffer = render_pane(&mut screen, area);
+    let (x, y) = text_row(&buffer, "Selected repositories");
+    screen.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert_eq!(
+        screen.menu.as_ref().map(|menu| menu.kind),
+        Some(LocalMenuKind::Accounts)
+    );
+
+    let mut compact = GithubScreen::new(default.clone());
+    let area = Rect::new(0, 0, 40, 24);
+    let buffer = render_pane(&mut compact, area);
+    let (x, y) = text_row(&buffer, "Scope");
+    compact.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    compact.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    compact.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(render_text(&mut compact, 40, 24).contains("All repositories"));
+    assert_eq!(
+        compact.menu.as_ref().map(|menu| menu.kind),
+        Some(LocalMenuKind::Repositories)
+    );
+    assert!(compact.scope.repositories.is_empty());
+    assert_eq!(compact.scope_state.default, default);
+}
+
+#[test]
+fn breadcrumb_deduplicates_owner_and_packs_controls_at_the_leading_edge() {
+    let organization = crate::app::state::GithubOrganization::parse("flex-rental-solutions")
+        .expect("valid organization")
+        .expect("organization");
+    let repository = GithubRepository::parse("flex-rental-solutions/flex5-playwright-tests")
+        .expect("valid repository");
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: Vec::new(),
+        organization: Some(organization),
+    });
+    screen.repository = Some(repository);
+    let text = render_text(&mut screen, 120, 24);
+    assert!(
+        text.contains("/ flex-rental-solutions ▾ / flex5-playwright-tests ▾"),
+        "{text}"
+    );
+    assert!(!text.contains("flex-rental-solutions/flex5-playwright-tests"));
+    let buffer = render_pane(&mut screen, Rect::new(0, 0, 120, 24));
+    let [account, repository] = screen.geometry.scope_controls.as_slice() else {
+        panic!("expanded breadcrumb controls");
+    };
+    assert_eq!(repository.area.x, account.area.right());
+    assert_eq!(buffer[(account.area.x + 1, account.area.y)].symbol(), "/");
+    assert_eq!(
+        buffer[(repository.area.x + 1, repository.area.y)].symbol(),
+        "/"
+    );
+}
+
+#[test]
+fn organization_choice_changes_only_the_transient_scope() {
+    let default_repository = GithubRepository::parse("example/project").expect("valid repository");
+    let default = ResolvedGithubScope {
+        repositories: vec![default_repository],
+        organization: None,
+    };
+    let mut screen = GithubScreen::new(default.clone());
+    screen.scope_state.organizations.items = vec![Organization {
+        login: "acme".into(),
+    }];
+    screen.activate(GithubAction::ScopeAccount(2));
+    assert_eq!(
+        screen.scope.organization.as_ref().map(|org| org.as_str()),
+        Some("acme")
+    );
+    assert!(screen.scope.repositories.is_empty());
+    assert!(screen.repository.is_none());
+    assert_eq!(screen.scope_state.default, default);
+    assert_eq!(
+        screen.menu.as_ref().map(|menu| menu.kind),
+        Some(LocalMenuKind::Repositories)
+    );
+}
+
+#[test]
+fn breadcrumb_repository_choice_can_restore_all_repositories() {
+    let repository = GithubRepository::parse("example/project").expect("valid repository");
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: Vec::new(),
+        organization: None,
+    });
+    screen.scope_state.repositories.items = vec![repository.clone()];
+    screen.scope_state.repositories.loaded = true;
+    screen.activate(GithubAction::Tab(GithubTab::Repositories));
+    screen.drain_requests();
+    screen.activate(GithubAction::ChooseRepository);
+    screen.activate(GithubAction::ScopeRepository(1));
+    assert_eq!(screen.repository, Some(repository.clone()));
+    assert!(screen
+        .entries
+        .iter()
+        .all(|entry| matches!(entry, Entry::Repository(item) if item == &repository)));
+    assert!(!screen
+        .drain_requests()
+        .iter()
+        .any(|request| matches!(request, GithubRequest::Repositories { .. })));
+    screen.activate(GithubAction::ChooseRepository);
+    screen.activate(GithubAction::ScopeRepository(0));
+    assert!(screen.repository.is_none());
+}
+
+#[test]
+fn changing_scope_releases_cancelled_catalog_loads() {
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: Vec::new(),
+        organization: None,
+    });
+    screen.activate(GithubAction::ChooseAccount);
+    assert!(screen.scope_state.organizations.loading);
+    screen.activate(GithubAction::ScopeAccount(1));
+    assert!(!screen.scope_state.organizations.loading);
+    screen.drain_requests();
+    screen.activate(GithubAction::ChooseAccount);
+    assert!(screen
+        .drain_requests()
+        .iter()
+        .any(|request| matches!(request, GithubRequest::Organizations { .. })));
+}
+
+#[test]
+fn organization_page_populates_the_open_account_picker() {
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: Vec::new(),
+        organization: None,
+    });
+    screen.activate(GithubAction::ChooseAccount);
+    let mut organization_id = None;
+    for (index, request) in screen.drain_requests().into_iter().enumerate() {
+        let id = 100 + index as u64;
+        if matches!(request, GithubRequest::Organizations { .. }) {
+            organization_id = Some(id);
+        }
+        screen.track_request(id);
+    }
+    screen.apply(
+        organization_id.expect("organization request"),
+        Ok(GithubResponse::Organizations(Page {
+            items: vec![Organization {
+                login: "acme".into(),
+            }],
+            next_cursor: None,
+        })),
+    );
+    assert!(screen
+        .menu
+        .as_ref()
+        .expect("account picker")
+        .items
+        .iter()
+        .any(|(_, label)| label == "Organization acme"));
+}
+
+#[test]
+fn stale_organization_page_cannot_replace_new_account_scope() {
+    let mut screen = GithubScreen::new(ResolvedGithubScope {
+        repositories: Vec::new(),
+        organization: None,
+    });
+    screen.activate(GithubAction::ChooseAccount);
+    let mut organization_id = None;
+    for (index, request) in screen.drain_requests().into_iter().enumerate() {
+        let id = 200 + index as u64;
+        if matches!(request, GithubRequest::Organizations { .. }) {
+            organization_id = Some(id);
+        }
+        screen.track_request(id);
+    }
+    screen.activate(GithubAction::ScopeAccount(1));
+    screen.apply(
+        organization_id.expect("organization request"),
+        Ok(GithubResponse::Organizations(Page {
+            items: vec![Organization {
+                login: "stale-org".into(),
+            }],
+            next_cursor: None,
+        })),
+    );
+    assert!(screen.scope_state.organizations.items.is_empty());
+}
 #[test]
 fn deleting_a_comment_requires_ownership_and_explicit_confirmation() {
     let mut screen = loaded_screen();

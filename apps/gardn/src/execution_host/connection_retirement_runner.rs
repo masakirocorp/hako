@@ -896,6 +896,7 @@ mod tests {
             next_public_tab_number: 0,
             tabs: vec![TabSnapshot {
                 custom_name: None,
+                role: crate::workspace::TabRole::Terminal,
                 layout: LayoutSnapshot::Pane(0),
                 panes: HashMap::from([(
                     0,

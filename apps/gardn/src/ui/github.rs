@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
@@ -34,30 +34,27 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
         geometry.area,
         Style::default().bg(palette.panel_bg).fg(palette.text),
     );
-    let scope = screen
-        .repository
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| {
-            screen.scope.organization.as_ref().map_or_else(
-                || match screen.scope.repositories.as_slice() {
-                    [] => "Personal queues".into(),
-                    [repository] => repository.to_string(),
-                    repositories => format!("{} repositories", repositories.len()),
-                },
-                |organization| format!("org {}", organization.as_str()),
-            )
-        });
-    let title = if geometry.scope.is_empty() {
-        format!("GitHub · {scope}")
-    } else {
-        "GitHub".into()
-    };
-    render_modal_header_bar(frame, geometry.header, &title, palette, false);
-    frame.render_widget(
-        Paragraph::new(scope).style(Style::default().fg(palette.subtext0)),
-        geometry.scope,
-    );
+    render_modal_header_bar(frame, geometry.header, "GitHub", palette, false);
+    for (index, control) in geometry.scope_controls.iter().enumerate() {
+        let focused = screen.focus == Focus::Scope && screen.control_focus == index;
+        let hovered = screen.hovered(control.area);
+        let style = if focused {
+            Style::default()
+                .fg(panel_contrast_fg(palette))
+                .bg(palette.accent)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else if hovered {
+            secondary_action_style(palette).add_modifier(Modifier::UNDERLINED)
+        } else {
+            secondary_action_style(palette)
+        };
+        frame.render_widget(
+            Paragraph::new(format!(" {}", control.label))
+                .style(style)
+                .alignment(Alignment::Left),
+            control.area,
+        );
+    }
     render_list(screen, palette, frame);
     render_detail(screen, palette, frame);
     render_files(screen, palette, frame);
@@ -124,7 +121,7 @@ pub fn render(screen: &GithubScreen, palette: &Palette, frame: &mut Frame) {
             notice.clone()
         } else if !screen.filter.is_empty() {
             format!(
-                "Filter loaded results: {} · {} matches · Actions… for this view",
+                "Filter loaded results: {} · {} matches · … for more commands",
                 screen.filter,
                 screen.visible_entries().len()
             )

@@ -266,6 +266,11 @@ impl GithubScreen {
                 Some(GithubAction::ToggleSplit)
             }
             KeyCode::Char('?') => Some(GithubAction::Palette),
+            KeyCode::Enter | KeyCode::Char(' ') if self.focus == Focus::Scope => self
+                .geometry
+                .scope_controls
+                .get(self.control_focus)
+                .map(|control| control.action),
             KeyCode::Enter | KeyCode::Char(' ') if self.focus == Focus::Controls => self
                 .geometry
                 .controls
@@ -286,11 +291,15 @@ impl GithubScreen {
                 }
                 self.focus = match self.focus {
                     Focus::List if self.detail.is_some() => Focus::Detail,
-                    Focus::List | Focus::Detail => Focus::Controls,
-                    Focus::Controls => Focus::List,
+                    Focus::List => Focus::Controls,
+                    Focus::Detail => Focus::Controls,
+                    Focus::Controls => Focus::Scope,
+                    Focus::Scope => Focus::List,
                 };
                 if self.focus == Focus::Detail {
                     self.move_link_focus(true);
+                } else {
+                    self.control_focus = 0;
                 }
             }
             KeyCode::BackTab => {
@@ -299,19 +308,31 @@ impl GithubScreen {
                     return Vec::new();
                 }
                 self.focus = match self.focus {
-                    Focus::List => Focus::Controls,
+                    Focus::List => Focus::Scope,
                     Focus::Detail => Focus::List,
                     Focus::Controls if self.detail.is_some() => Focus::Detail,
                     Focus::Controls => Focus::List,
+                    Focus::Scope => Focus::Controls,
                 };
                 if self.focus == Focus::Detail {
                     self.move_link_focus(false);
+                } else {
+                    self.control_focus = 0;
                 }
             }
             KeyCode::Up | KeyCode::Down | KeyCode::Char('j' | 'k') => {
                 self.selected_link = None;
                 let forward = matches!(key.code, KeyCode::Down | KeyCode::Char('j'));
-                if self.focus == Focus::Controls {
+                if self.focus == Focus::Scope {
+                    let count = self.geometry.scope_controls.len();
+                    if count > 0 {
+                        self.control_focus = if forward {
+                            (self.control_focus + 1) % count
+                        } else {
+                            (self.control_focus + count - 1) % count
+                        };
+                    }
+                } else if self.focus == Focus::Controls {
                     let count = self.geometry.controls.len();
                     if count > 0 {
                         self.control_focus = if forward {
@@ -330,6 +351,16 @@ impl GithubScreen {
                         .detail_rows
                         .get(self.detail_scroll)
                         .and_then(|row| row.target);
+                }
+            }
+            KeyCode::Left | KeyCode::Right if self.focus == Focus::Scope => {
+                let count = self.geometry.scope_controls.len();
+                if count > 0 {
+                    self.control_focus = if key.code == KeyCode::Right {
+                        (self.control_focus + 1) % count
+                    } else {
+                        (self.control_focus + count - 1) % count
+                    };
                 }
             }
             KeyCode::Left | KeyCode::Right if self.focus == Focus::Controls => {
@@ -496,10 +527,19 @@ impl GithubScreen {
         if mouse.kind == MouseEventKind::Moved {
             return Vec::new();
         }
-        if !contains(self.geometry.area, point) {
-            return Vec::new();
-        }
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if let Some((index, control)) = self
+                .geometry
+                .scope_controls
+                .iter()
+                .enumerate()
+                .find(|(_, control)| contains(control.area, point))
+            {
+                let action = control.action;
+                self.control_focus = index;
+                self.focus = Focus::Scope;
+                return self.activate(action);
+            }
             if let Some((index, control)) = self
                 .geometry
                 .controls

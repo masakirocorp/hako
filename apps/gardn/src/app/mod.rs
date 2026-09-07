@@ -321,6 +321,9 @@ pub struct App {
         crate::terminal::TerminalId,
         crate::app::creation::PendingRemoteCreation,
     >,
+    /// Remote GitHub tabs awaiting worker ACK. The owning client keeps the host state.
+    pub(crate) pending_github_remote_terminals:
+        std::collections::HashSet<crate::terminal::TerminalId>,
     /// Committed/failed remote creates waiting for API response encoding.
     pub(crate) remote_creation_completions: Vec<crate::app::creation::RemoteCreationCompletion>,
     /// API responders deferred until remote create ACK/failure.
@@ -504,9 +507,8 @@ fn agent_panel_scope_from_config(
     }
 }
 
-/// Parse the configured agent name list into a deduplicated set of `Agent`
-/// values. Unknown agent names are silently dropped so a typo cannot disable
-/// other valid entries.
+/// Parse the configured agent name list into a deduplicated set of `Agent` values.
+/// Unknown agent names are silently dropped so a typo cannot disable other valid entries.
 fn parse_cjk_ime_agents(names: &[String]) -> Vec<crate::detect::Agent> {
     let mut out = Vec::with_capacity(names.len());
     for name in names {
@@ -1348,6 +1350,7 @@ impl App {
             terminal_runtimes: restored_terminal_runtimes,
             execution_hosts,
             pending_remote_creations: std::collections::HashMap::new(),
+            pending_github_remote_terminals: std::collections::HashSet::new(),
             remote_creation_completions: Vec::new(),
             pending_remote_api_responses: std::collections::HashMap::new(),
             pending_client_view_effects: Vec::new(),
@@ -1645,7 +1648,11 @@ impl App {
         }
 
         if let Some((ws_idx, custom_name)) = self.state.request_new_tab_for_client.take() {
-            match self.create_tab_for_workspace(ws_idx, custom_name) {
+            match self.create_tab_for_workspace(
+                ws_idx,
+                custom_name,
+                crate::workspace::TabRole::Terminal,
+            ) {
                 Ok(_) => {
                     changed = true;
                 }
@@ -2144,12 +2151,12 @@ impl App {
 
             let now = Instant::now();
             needs_render |= self.poll_github();
-            if self.default_client_view.github.is_some() {
+            if self.default_client_view.github.is_some()
+                || self.default_client_view.github_host.is_some()
+                || self.default_client_view.focused_tab_is_github(&self.state)
+            {
                 needs_render |=
                     self.with_default_github_view(|app, view| app.pump_github_for_view(view));
-            }
-            if self.poll_execution_hosts(now) {
-                needs_render = true;
             }
             if self.handle_scheduled_tasks(now, needs_render) {
                 needs_render = true;
@@ -2274,15 +2281,24 @@ impl App {
                                 area,
                             );
                         }
-                        if self.default_client_view.github.is_some() {
+                        if self.default_client_view.github.is_some()
+                            || self.default_client_view.github_host.is_some()
+                        {
                             self.with_default_github_view(|_, _| {});
+                            crate::ui::render_with_runtime_registry_for_view(
+                                &self.state,
+                                &self.default_client_view,
+                                &self.terminal_runtimes,
+                                frame,
+                            );
+                        } else {
+                            crate::ui::render_with_github(
+                                &self.state,
+                                &self.terminal_runtimes,
+                                None,
+                                frame,
+                            );
                         }
-                        crate::ui::render_with_github(
-                            &self.state,
-                            &self.terminal_runtimes,
-                            self.default_client_view.github.as_ref(),
-                            frame,
-                        );
                         if let Some(line) = overlay.as_deref() {
                             crate::ui::render_loop_debug(frame, line, overlay_bg, overlay_fg);
                         }
@@ -2292,10 +2308,12 @@ impl App {
                 if kitty_graphics_enabled {
                     crate::kitty_graphics::paint_local_pane_graphics(
                         &self.state,
-                        self.default_client_view
-                            .github
-                            .as_ref()
-                            .and(self.default_client_view.github_pane_id),
+                        self.default_client_view.github.as_ref().and_then(|_| {
+                            self.default_client_view
+                                .github_host
+                                .as_ref()
+                                .map(crate::app::view_state::GithubHost::root_pane)
+                        }),
                         &mut self.pane_graphics,
                         &self.terminal_runtimes,
                         cell_size,
@@ -5801,7 +5819,7 @@ impl App {
                     | crate::app::command_palette::CommandPaletteAction::OpenGithub
             )
         {
-            self.close_github_for_view(client_view);
+            self.release_github_for_view(client_view);
         }
         match action {
             crate::app::command_palette::CommandPaletteAction::Github(action) => {
@@ -13197,340 +13215,332 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn github_opens_in_dedicated_tab_and_close_restores_source_tab() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("workspace")];
+        app.state.active = Some(0);
+        app.state.mode = Mode::Terminal;
+        let source_pane = app.state.workspaces[0].tabs[0].root_pane;
+        let mut view = ClientViewState::from_default_client_state(&app.state);
+
+        app.open_github_for_view(&mut view);
+
+        assert_eq!(app.state.workspaces[0].tabs.len(), 2);
+        assert_eq!(app.state.workspaces[0].tabs[0].root_pane, source_pane);
+        assert_eq!(app.state.workspaces[0].tabs[1].display_name(), "GitHub");
+        assert_eq!(view.active_tab_index_for_workspace(&app.state, 0), Some(1));
+        assert_ne!(
+            view.github_host.as_ref().map(|host| host.root_pane()),
+            Some(source_pane)
+        );
+
+        app.close_github_for_view(&mut view);
+
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1);
+        assert_eq!(
+            view.current_pane_focus_target(&app.state)
+                .expect("source pane remains focused")
+                .pane_id,
+            source_pane
+        );
+        assert_eq!(view.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn default_github_tab_can_switch_without_replacing_source_tab() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("workspace")];
+        app.state.workspaces[0].test_add_tab(Some("other"));
+        app.state.workspaces[0].active_tab = 0;
+        app.state.active = Some(0);
+        app.state.mode = Mode::Terminal;
+
+        app.open_default_github(Some(0));
+
+        assert_eq!(app.state.workspaces[0].active_tab, 2);
+        app.open_default_github(Some(0));
+        assert_eq!(app.state.workspaces[0].tabs.len(), 3);
+        assert_eq!(
+            app.state.workspaces[0]
+                .tabs
+                .iter()
+                .filter(|tab| tab.role == crate::workspace::TabRole::Github)
+                .count(),
+            1
+        );
+        assert_eq!(
+            app.default_client_view
+                .active_tab_index_for_workspace(&app.state, 0),
+            Some(2)
+        );
+        app.state.switch_tab(0);
+        app.with_default_github_view(|_, _| {});
+        assert_eq!(
+            app.default_client_view
+                .active_tab_index_for_workspace(&app.state, 0),
+            Some(0)
+        );
+        assert!(app.default_client_view.github.is_some());
+        assert_eq!(app.default_client_view.mode, Mode::Terminal);
+
+        app.state.switch_tab(2);
+        app.with_default_github_view(|_, _| {});
+        assert_eq!(app.default_client_view.mode, Mode::Github);
+        app.with_default_github_view(|app, view| app.close_github_for_view(view));
+        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].tabs.len(), 2);
+    }
+
     #[test]
-    fn github_palette_escape_and_scope_invalidation_stay_client_local() {
+    fn remote_github_completion_uses_stable_tab_identity() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("workspace");
+        let github_tab = workspace.test_add_tab(Some("GitHub"));
+        workspace.tabs[github_tab].role = crate::workspace::TabRole::Github;
+        let github_root = workspace.tabs[github_tab].root_pane;
+        let terminal_id = workspace
+            .terminal_id(github_root)
+            .expect("GitHub terminal")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        let mut view = ClientViewState::from_default_client_state(&app.state);
+        view.active_tabs
+            .insert(app.state.workspaces[0].id.clone(), 0);
+        let source_focus = view
+            .current_pane_focus_target(&app.state)
+            .expect("source focus");
+        view.github_host = Some(crate::app::view_state::GithubHost {
+            workspace_id: app.state.workspaces[0].id.clone(),
+            tab_number: app.state.workspaces[0].tabs[github_tab].number,
+            source_focus: Some(source_focus),
+            scope_settings: (crate::github::GithubRepositoryScope::Automatic, None),
+            tab: crate::app::view_state::GithubHostTab::Pending {
+                terminal_id: terminal_id.clone(),
+                root_pane: github_root,
+                scope: crate::github::ResolvedGithubScope {
+                    repositories: Vec::new(),
+                    organization: None,
+                },
+            },
+        });
+        app.pending_github_remote_terminals
+            .insert(terminal_id.clone());
+        app.remote_creation_completions
+            .push(crate::app::creation::RemoteCreationCompletion {
+                terminal_id,
+                result: Ok(crate::app::creation::CommittedRemoteCreation::Tab {
+                    ws_idx: usize::MAX,
+                    tab_idx: usize::MAX,
+                }),
+            });
+
+        assert!(app.pump_github_for_view(&mut view));
+
+        assert!(view.github.is_some());
+        assert_eq!(
+            view.current_pane_focus_target(&app.state)
+                .expect("GitHub focus")
+                .pane_id,
+            github_root
+        );
+    }
+
+    #[test]
+    fn closing_pending_github_after_remote_commit_removes_committed_tab() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("workspace");
+        let github_tab = workspace.test_add_tab(Some("GitHub"));
+        workspace.tabs[github_tab].role = crate::workspace::TabRole::Github;
+        let github_root = workspace.tabs[github_tab].root_pane;
+        let terminal_id = workspace
+            .terminal_id(github_root)
+            .expect("GitHub terminal")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        let mut view = ClientViewState::from_default_client_state(&app.state);
+        let source_focus = view
+            .current_pane_focus_target(&app.state)
+            .expect("source focus");
+        view.github_host = Some(crate::app::view_state::GithubHost {
+            workspace_id: app.state.workspaces[0].id.clone(),
+            tab_number: app.state.workspaces[0].tabs[github_tab].number,
+            source_focus: Some(source_focus),
+            scope_settings: (crate::github::GithubRepositoryScope::Automatic, None),
+            tab: crate::app::view_state::GithubHostTab::Pending {
+                terminal_id: terminal_id.clone(),
+                root_pane: github_root,
+                scope: crate::github::ResolvedGithubScope {
+                    repositories: Vec::new(),
+                    organization: None,
+                },
+            },
+        });
+        app.pending_github_remote_terminals
+            .insert(terminal_id.clone());
+        app.remote_creation_completions
+            .push(crate::app::creation::RemoteCreationCompletion {
+                terminal_id,
+                result: Ok(crate::app::creation::CommittedRemoteCreation::Tab {
+                    ws_idx: 0,
+                    tab_idx: github_tab,
+                }),
+            });
+
+        app.close_github_for_view(&mut view);
+
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1);
+        assert!(app.pending_github_remote_terminals.is_empty());
+        assert!(app.remote_creation_completions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn github_scope_invalidation_releases_only_affected_view() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
         app.state.active = Some(0);
         app.state.mode = Mode::Terminal;
-        let scope = crate::github::ResolvedGithubScope {
-            repositories: Vec::new(),
-            organization: None,
-        };
         let mut first = ClientViewState::from_default_client_state(&app.state);
+        first.active_workspace = Some(0);
         let mut second = ClientViewState::from_default_client_state(&app.state);
-        for (index, view) in [(0, &mut first), (1, &mut second)] {
-            view.active_workspace = Some(index);
-            view.github_workspace_id = Some(app.state.workspaces[index].id.clone());
-            view.github_pane_id = Some(app.state.workspaces[index].tabs[0].layout.focused());
-            view.github_scope_settings =
-                Some((crate::github::GithubRepositoryScope::Automatic, None));
-            view.github = Some(crate::github::screen::GithubScreen::new(scope.clone()));
-            view.mode = Mode::CommandPalette;
-        }
-        app.route_client_events_for_view(
-            &mut first,
-            vec![raw_key(
-                KeyCode::Esc,
-                KeyModifiers::empty(),
-                KeyEventKind::Press,
-            )],
-            false,
+        second.active_workspace = Some(1);
+        app.open_github_for_view(&mut first);
+        app.open_github_for_view(&mut second);
+
+        let second_source = app.state.workspaces[1].tabs[0].root_pane;
+        assert_eq!(app.state.workspaces[0].tabs.len(), 2);
+        assert_eq!(app.state.workspaces[1].tabs.len(), 2);
+        let first_host = first.github_host.as_ref().expect("first host").root_pane();
+        let second_host = second
+            .github_host
+            .as_ref()
+            .expect("second host")
+            .root_pane();
+        assert_eq!(
+            first
+                .current_pane_focus_target(&app.state)
+                .expect("first focus")
+                .pane_id,
+            first_host
         );
-        assert_eq!(first.mode, Mode::Github);
-        assert_eq!(second.mode, Mode::CommandPalette);
+        assert_eq!(
+            second
+                .current_pane_focus_target(&app.state)
+                .expect("second focus")
+                .pane_id,
+            second_host
+        );
+        assert_ne!(first_host, second_source);
         app.state.workspaces[0].github_scope =
             crate::github::GithubRepositoryScope::GroupOrganization;
         assert!(app.pump_github_for_view(&mut first));
         assert!(first.github.is_none());
-        assert_eq!(first.mode, Mode::Terminal);
+        assert!(first.github_host.is_none());
+        assert_eq!(app.state.workspaces[0].tabs.len(), 2);
         assert!(second.github.is_some());
-        assert_eq!(second.mode, Mode::CommandPalette);
-        assert!(app.state.request_open_project_command.is_none());
-        app.close_github_for_view(&mut second);
-    }
-
-    #[test]
-    fn removing_github_owner_closes_only_its_client_screen() {
-        let mut app = test_app();
-        app.state.workspaces = vec![Workspace::test_new("owner"), Workspace::test_new("other")];
-        app.state.active = Some(0);
-        app.state.mode = Mode::Terminal;
-        let mut first = ClientViewState::from_default_client_state(&app.state);
-        let mut second = ClientViewState::from_default_client_state(&app.state);
-        let other = app.state.workspaces[1].tabs[0].root_pane;
-        second.focus_pane_in_workspace(&app.state, 1, 0, other);
-        attach_test_github(&app, &mut first);
-        attach_test_github(&app, &mut second);
-        app.state.workspaces[0].tabs.clear();
-        assert!(app.pump_github_for_view(&mut first));
-        assert!(first.github.is_none());
-        assert!(second.github.is_some());
-        assert_eq!(second.github_pane_id, Some(other));
+        assert_eq!(app.state.workspaces[1].tabs.len(), 2);
     }
 
     #[tokio::test]
-    async fn standalone_github_routes_other_pane_input_and_closes_without_removing_owner() {
+    async fn removing_github_tab_closes_screen_and_restores_source_focus() {
         let mut app = test_app();
-        let mut workspace = Workspace::test_new("standalone");
-        let owner = workspace.tabs[0].root_pane;
-        let other = workspace.test_split(ratatui::layout::Direction::Horizontal);
-        workspace.tabs[0].layout.focus_pane(owner);
-        app.state.workspaces = vec![workspace];
+        app.state.workspaces = vec![Workspace::test_new("workspace")];
         app.state.active = Some(0);
         app.state.mode = Mode::Terminal;
-        app.state.mouse_capture = true;
-        app.state.ensure_test_terminals();
-        let terminal_id = app.state.workspaces[0]
-            .terminal_id(other)
-            .cloned()
-            .expect("terminal");
-        let (runtime, mut receiver) =
-            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"OTHER", 16);
-        app.terminal_runtimes.insert(terminal_id, runtime);
-        crate::ui::compute_view_with_runtime_registry(
-            &mut app.state,
-            &app.terminal_runtimes,
-            ratatui::layout::Rect::new(0, 0, 160, 40),
-        );
+        let source = app.state.workspaces[0].tabs[0].root_pane;
         let mut view = ClientViewState::from_default_client_state(&app.state);
-        attach_test_github(&app, &mut view);
-        app.default_client_view = view;
-        app.state.mode = Mode::Github;
-        let other_area = app
-            .state
-            .view
-            .pane_infos
-            .iter()
-            .find(|info| info.id == other)
-            .expect("other pane")
-            .inner_rect;
-        app.handle_raw_input_event(raw_mouse(
-            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            other_area.x + 1,
-            other_area.y + 1,
-        ))
-        .await;
-        app.handle_raw_input_event(raw_key(
-            KeyCode::Char('x'),
-            KeyModifiers::empty(),
-            KeyEventKind::Press,
-        ))
-        .await;
-        assert_eq!(
-            receiver.try_recv().expect("other terminal input"),
-            bytes::Bytes::from_static(b"x")
-        );
-        assert_eq!(app.default_client_view.github_pane_id, Some(owner));
-        let owner_area = app
-            .state
-            .view
-            .pane_infos
-            .iter()
-            .find(|info| info.id == owner)
-            .expect("owner")
-            .inner_rect;
-        app.handle_raw_input_event(raw_mouse(
-            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            owner_area.x + 1,
-            owner_area.y + owner_area.height - 2,
-        ))
-        .await;
-        app.handle_raw_input_event(raw_key(
-            KeyCode::Esc,
-            KeyModifiers::empty(),
-            KeyEventKind::Press,
-        ))
-        .await;
-        assert!(app.default_client_view.github.is_none());
-        assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), owner);
-        assert!(app.state.workspaces[0].tabs[0].panes.contains_key(&owner));
-        assert_eq!(app.state.mode, Mode::Terminal);
-    }
 
-    fn attach_test_github(app: &App, view: &mut ClientViewState) {
-        let target = view
-            .current_pane_focus_target(&app.state)
-            .expect("focused pane");
-        view.github_workspace_id = Some(target.workspace_id);
-        view.github_pane_id = Some(target.pane_id);
-        view.github_scope_settings = Some((crate::github::GithubRepositoryScope::Automatic, None));
-        view.github = Some(crate::github::screen::GithubScreen::new(
-            crate::github::ResolvedGithubScope {
-                repositories: Vec::new(),
-                organization: None,
-            },
-        ));
-        view.mode = Mode::Github;
-    }
-
-    fn github_test_frame(app: &App, view: &ClientViewState) -> ratatui::buffer::Buffer {
-        let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).expect("terminal");
-        terminal
-            .draw(|frame| {
-                crate::ui::render_with_runtime_registry_for_view(
-                    &app.state,
-                    view,
-                    &app.terminal_runtimes,
-                    frame,
-                )
-            })
-            .expect("render");
-        terminal.backend().buffer().clone()
-    }
-
-    #[test]
-    fn github_keeps_surrounding_panes_chrome_and_mouse_input_available() {
-        let mut app = test_app();
-        let mut workspace = Workspace::test_new("workspace");
-        let owner = workspace.tabs[0].root_pane;
-        let other = workspace.test_split(ratatui::layout::Direction::Horizontal);
-        workspace.tabs[0].layout.focus_pane(owner);
-        app.state.workspaces = vec![workspace];
+        app.open_github_for_view(&mut view);
+        let host = view.github_host.as_ref().expect("GitHub host").root_pane();
+        let host_tab = app.state.workspaces[0]
+            .find_tab_index_for_pane(host)
+            .expect("GitHub tab");
         app.state.active = Some(0);
-        app.state.mode = Mode::Terminal;
-        app.state.mouse_capture = true;
-        app.state.ensure_test_terminals();
-        let terminal_id = app.state.workspaces[0]
-            .terminal_id(other)
-            .cloned()
-            .expect("terminal id");
-        let (runtime, mut receiver) = TerminalRuntime::test_with_channel_and_scrollback_bytes(
-            80,
-            24,
-            0,
-            b"OTHER PANE OUTPUT\x1b[?1002h\x1b[?1006h",
-            16,
-        );
-        app.terminal_runtimes.insert(terminal_id, runtime);
-        let mut view = ClientViewState::from_default_client_state(&app.state);
-        let area = ratatui::layout::Rect::new(0, 0, 160, 40);
-        compute_client_view(&app, &mut view, area);
-        let before = github_test_frame(&app, &view);
-        attach_test_github(&app, &mut view);
-        compute_client_view(&app, &mut view, area);
-        let owner_area = view.github_pane_rect(&app.state);
-        let after = github_test_frame(&app, &view);
-        for y in 0..40 {
-            for x in 0..160 {
-                if !owner_area.contains((x, y).into()) {
-                    assert_eq!(after[(x, y)], before[(x, y)], "outside owner at {x},{y}");
-                }
-            }
-        }
-        let other_info = view
-            .computed
-            .pane_infos
-            .iter()
-            .find(|info| info.id == other)
-            .expect("other pane");
-        let (x, y) = screen_point_for_client_canvas(
-            &view,
-            other_info.inner_rect.x + 1,
-            other_info.inner_rect.y + 1,
-        );
-        app.route_client_events_for_view(
-            &mut view,
-            vec![raw_mouse(
-                crossterm::event::MouseEventKind::ScrollDown,
-                x,
-                y,
-            )],
-            true,
-        );
-        assert!(receiver
-            .try_recv()
-            .expect("other pane receives wheel")
-            .starts_with(b"\x1b[<65;"));
-        app.route_client_events_for_view(
-            &mut view,
-            vec![raw_mouse(
-                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                x,
-                y,
-            )],
-            true,
-        );
+        app.state.selected = 0;
+        app.state.close_tab_at(host_tab);
+
+        assert!(app.pump_github_for_view(&mut view));
+        assert!(view.github.is_none());
+        assert!(view.github_host.is_none());
         assert_eq!(
             view.current_pane_focus_target(&app.state)
-                .expect("focus")
+                .expect("source focus")
                 .pane_id,
-            other
+            source
         );
-        assert_eq!(view.github_pane_id, Some(owner));
-        assert!(view.github.is_some());
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1);
     }
 
     #[test]
-    fn github_owner_survives_tab_workspace_switching_and_close_restores_terminal() {
+    fn focused_restored_github_role_hydrates_a_fresh_client_view() {
         let mut app = test_app();
-        let mut workspace = Workspace::test_new("owner workspace");
-        let owner = workspace.tabs[0].root_pane;
-        workspace.test_add_tab(Some("other tab"));
-        workspace.active_tab = 0;
-        app.state.workspaces = vec![workspace, Workspace::test_new("other workspace")];
+        let mut workspace = Workspace::test_new("workspace");
+        workspace.tabs[0].role = crate::workspace::TabRole::Github;
+        let workspace_id = workspace.id.clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.workspaces[0].active_tab = 0;
+        let mut view = ClientViewState::from_default_client_state(&app.state);
+        view.active_workspace = Some(0);
+        view.active_tabs.insert(workspace_id, 0);
+
+        assert!(app.pump_github_for_view(&mut view));
+
+        assert!(view.github.is_some());
+        assert!(view.github_host.is_some());
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn focusing_another_workspace_github_tab_replaces_retained_host() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
         app.state.active = Some(0);
         app.state.mode = Mode::Terminal;
-        app.state.mouse_capture = true;
-        app.state.ensure_test_terminals();
         let mut view = ClientViewState::from_default_client_state(&app.state);
-        let area = ratatui::layout::Rect::new(0, 0, 160, 40);
-        compute_client_view(&app, &mut view, area);
-        let before = github_test_frame(&app, &view);
-        attach_test_github(&app, &mut view);
-        let tab = view.computed.tab_hit_areas[1];
-        app.route_client_events_for_view(
-            &mut view,
-            vec![
-                raw_mouse(
-                    crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                    tab.x + 1,
-                    tab.y,
-                ),
-                raw_mouse(
-                    crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
-                    tab.x + 1,
-                    tab.y,
-                ),
-            ],
-            true,
-        );
-        assert_eq!(view.active_tab_index_for_workspace(&app.state, 0), Some(1));
-        compute_client_view(&app, &mut view, area);
-        assert!(view.github_pane_rect(&app.state).is_empty());
-        assert!(view.github.is_some());
-        let card = view
-            .computed
-            .workspace_card_areas
+        view.active_workspace = Some(0);
+        app.open_github_for_view(&mut view);
+        view.active_workspace = Some(1);
+        app.open_github_for_view(&mut view);
+        let first_workspace_id = app.state.workspaces[0].id.clone();
+        let first_github_tab = app.state.workspaces[0]
+            .tabs
             .iter()
-            .find(|card| card.ws_idx == 1)
-            .expect("workspace card")
-            .rect;
-        app.route_client_events_for_view(
-            &mut view,
-            vec![
-                raw_mouse(
-                    crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                    card.x + 1,
-                    card.y + 1,
-                ),
-                raw_mouse(
-                    crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
-                    card.x + 1,
-                    card.y + 1,
-                ),
-            ],
-            true,
+            .position(|tab| tab.role == crate::workspace::TabRole::Github)
+            .expect("first GitHub tab");
+        let first_root = app.state.workspaces[0].tabs[first_github_tab].root_pane;
+        view.focus_pane_in_workspace(&app.state, 0, first_github_tab, first_root);
+
+        assert!(app.pump_github_for_view(&mut view));
+
+        assert_eq!(
+            view.github_host
+                .as_ref()
+                .map(|host| host.workspace_id.as_str()),
+            Some(first_workspace_id.as_str())
         );
-        assert_eq!(view.active_workspace, Some(1));
-        compute_client_view(&app, &mut view, area);
-        assert!(view.github_pane_rect(&app.state).is_empty());
-        view.focus_pane_in_workspace(&app.state, 0, 0, owner);
-        compute_client_view(&app, &mut view, area);
-        app.route_client_events_for_view(
-            &mut view,
-            vec![raw_key(
-                KeyCode::Esc,
-                KeyModifiers::empty(),
-                KeyEventKind::Press,
-            )],
-            false,
-        );
-        assert!(view.github.is_none());
-        assert!(app.state.workspaces[0].tabs[0].panes.contains_key(&owner));
-        compute_client_view(&app, &mut view, area);
-        assert_eq!(github_test_frame(&app, &view), before);
+        assert_eq!(view.mode, Mode::Github);
+    }
+
+    #[test]
+    fn restored_github_hydration_preserves_settings_mode() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("workspace");
+        workspace.tabs[0].role = crate::workspace::TabRole::Github;
+        let workspace_id = workspace.id.clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        let mut view = ClientViewState::from_default_client_state(&app.state);
+        view.active_workspace = Some(0);
+        view.active_tabs.insert(workspace_id, 0);
+        view.mode = Mode::Settings;
+
+        assert!(app.pump_github_for_view(&mut view));
+
+        assert!(view.github.is_some());
+        assert_eq!(view.mode, Mode::Settings);
     }
 
     #[test]

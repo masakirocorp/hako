@@ -304,8 +304,43 @@ impl GithubService {
             GithubRequest::Viewer => Ok(GithubResponse::Viewer(decode(
                 self.api("GET", "user", None)?,
             )?)),
-            GithubRequest::Repositories { cursor, page_size } => {
-                let binding = format!("catalog:{:?}", self.scope()?);
+            GithubRequest::Organizations { cursor, page_size } => {
+                let size = page_size_value(*page_size)?;
+                let binding = format!("organizations:{size}");
+                let page = offset_cursor(cursor.as_deref(), &binding)?
+                    .checked_add(1)
+                    .ok_or("Organization pagination cursor overflowed")?;
+                let items: Vec<Organization> = decode(self.api(
+                    "GET",
+                    &format!("user/orgs?per_page={size}&page={page}"),
+                    None,
+                )?)?;
+                if items.len() > size {
+                    return Err("GitHub returned too many organizations for this page".into());
+                }
+                for organization in &items {
+                    let parsed = crate::app::state::GithubOrganization::parse(&organization.login)
+                        .map_err(|_| "GitHub returned an invalid organization login")?;
+                    if parsed.as_ref().map(|org| org.as_str()) != Some(organization.login.as_str())
+                    {
+                        return Err("GitHub returned an invalid organization login".into());
+                    }
+                }
+                let next_cursor = if items.len() == size {
+                    Some(make_offset(&binding, page)?)
+                } else {
+                    None
+                };
+                Ok(GithubResponse::Organizations(Page { items, next_cursor }))
+            }
+            GithubRequest::Repositories { cursor, page_size }
+            | GithubRequest::ScopeRepositories { cursor, page_size } => {
+                let binding = match request {
+                    GithubRequest::ScopeRepositories { .. } => {
+                        format!("scope-catalog:{:?}:{page_size}", self.scope()?)
+                    }
+                    _ => format!("catalog:{:?}", self.scope()?),
+                };
                 let offset = offset_cursor(cursor.as_deref(), &binding)?;
                 let repos = self.catalog()?;
                 let size = page_size_value(*page_size)?;
@@ -313,14 +348,20 @@ impl GithubService {
                     return Err("Repository cursor is no longer valid".into());
                 }
                 let end = offset.saturating_add(size).min(repos.len());
-                Ok(GithubResponse::Repositories(Page {
+                let page = Page {
                     items: repos[offset..end].to_vec(),
                     next_cursor: if end < repos.len() {
                         Some(make_offset(&binding, end)?)
                     } else {
                         None
                     },
-                }))
+                };
+                Ok(match request {
+                    GithubRequest::ScopeRepositories { .. } => {
+                        GithubResponse::ScopeRepositories(page)
+                    }
+                    _ => GithubResponse::Repositories(page),
+                })
             }
             GithubRequest::Repository(repo) => {
                 Ok(GithubResponse::Repository(self.repository(repo)?))
@@ -1292,6 +1333,187 @@ fn validate_rest_repository(value: &Value, expected: &GithubRepository) -> Githu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    struct Fixture(std::path::PathBuf);
+
+    #[cfg(unix)]
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    fn fake_service(script: &str, scope: ResolvedGithubScope) -> (Fixture, GithubService) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "gardn-github-service-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&root).expect("fixture directory");
+        let program = root.join("gh");
+        std::fs::write(&program, script).expect("fake GitHub executable");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700))
+            .expect("executable permissions");
+        (
+            Fixture(root),
+            GithubService {
+                scope: Some(scope),
+                cancelled: Arc::new(AtomicBool::new(false)),
+                program,
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn organizations_paginate_authenticated_endpoint() {
+        let (_fixture, mut service) = fake_service(
+            r#"#!/bin/sh
+case "$6" in
+  "user/orgs?per_page=2&page=1") printf '%s' '[{"login":"acme"},{"login":"beta"}]' ;;
+  "user/orgs?per_page=2&page=2") printf '%s' '[{"login":"zeta"}]' ;;
+  *) printf '%s' '{}' ;;
+esac
+"#,
+            ResolvedGithubScope {
+                repositories: Vec::new(),
+                organization: None,
+            },
+        );
+        let GithubResponse::Organizations(first) = service
+            .execute(&GithubRequest::Organizations {
+                cursor: None,
+                page_size: 2,
+            })
+            .expect("first organization page")
+        else {
+            panic!("wrong response")
+        };
+        assert_eq!(
+            first
+                .items
+                .iter()
+                .map(|organization| organization.login.as_str())
+                .collect::<Vec<_>>(),
+            vec!["acme", "beta"]
+        );
+        service.scope = Some(ResolvedGithubScope {
+            repositories: Vec::new(),
+            organization: Some(
+                crate::app::state::GithubOrganization::parse("acme")
+                    .expect("valid organization")
+                    .expect("organization"),
+            ),
+        });
+        let GithubResponse::Organizations(second) = service
+            .execute(&GithubRequest::Organizations {
+                cursor: first.next_cursor,
+                page_size: 2,
+            })
+            .expect("second organization page")
+        else {
+            panic!("wrong response")
+        };
+        assert_eq!(second.items[0].login, "zeta");
+        assert!(second.next_cursor.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn organizations_reject_non_array_response() {
+        let (_fixture, service) = fake_service(
+            "#!/bin/sh\nprintf '%s' '{\"login\":\"acme\"}'\n",
+            ResolvedGithubScope {
+                repositories: Vec::new(),
+                organization: None,
+            },
+        );
+        let result = service.execute(&GithubRequest::Organizations {
+            cursor: None,
+            page_size: 20,
+        });
+        assert!(matches!(result, Err(error) if error.contains("Invalid GitHub response")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn organizations_reject_invalid_login() {
+        let (_fixture, service) = fake_service(
+            "#!/bin/sh\nprintf '%s' '[{\"login\":\"bad/login\"}]'\n",
+            ResolvedGithubScope {
+                repositories: Vec::new(),
+                organization: None,
+            },
+        );
+        let result = service.execute(&GithubRequest::Organizations {
+            cursor: None,
+            page_size: 20,
+        });
+        assert!(matches!(result, Err(error) if error.contains("invalid organization login")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn organization_cursor_rejects_page_size_change() {
+        let (_fixture, service) = fake_service(
+            "#!/bin/sh\nprintf '%s' '[{\"login\":\"acme\"}]'\n",
+            ResolvedGithubScope {
+                repositories: Vec::new(),
+                organization: None,
+            },
+        );
+        let GithubResponse::Organizations(page) = service
+            .execute(&GithubRequest::Organizations {
+                cursor: None,
+                page_size: 1,
+            })
+            .expect("organization page")
+        else {
+            panic!("wrong response")
+        };
+        let result = service.execute(&GithubRequest::Organizations {
+            cursor: page.next_cursor,
+            page_size: 2,
+        });
+        assert!(matches!(result, Err(error) if error.contains("different query or scope")));
+    }
+
+    #[test]
+    fn scope_repository_cursor_is_not_a_repository_cursor() {
+        let repositories = ["team/one", "team/two"]
+            .into_iter()
+            .map(|name| GithubRepository::parse(name).expect("repository"))
+            .collect::<Vec<_>>();
+        let service = GithubService {
+            scope: Some(ResolvedGithubScope {
+                repositories: repositories.clone(),
+                organization: None,
+            }),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            program: "gh".into(),
+        };
+        let GithubResponse::ScopeRepositories(page) = service
+            .execute(&GithubRequest::ScopeRepositories {
+                cursor: None,
+                page_size: 1,
+            })
+            .expect("scope repository page")
+        else {
+            panic!("wrong response")
+        };
+        let result = service.execute(&GithubRequest::Repositories {
+            cursor: page.next_cursor,
+            page_size: 1,
+        });
+        assert!(matches!(result, Err(error) if error.contains("different query or scope")));
+    }
+
     #[cfg(unix)]
     #[test]
     fn personal_authored_queue_includes_public_contributions_outside_catalog() {

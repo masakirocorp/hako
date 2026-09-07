@@ -1,6 +1,211 @@
 use super::*;
 
 impl GithubScreen {
+    fn default_scope_label(&self) -> String {
+        match self.scope_state.default.repositories.as_slice() {
+            [] => "Space default".into(),
+            [repository] => format!("Selected repositories ({repository})"),
+            repositories => format!("{} selected repositories", repositories.len()),
+        }
+    }
+    pub(super) fn scope_account_label(&self) -> String {
+        if self.scope_state.account == AccountChoice::Default {
+            if !self.scope_state.default.repositories.is_empty() {
+                return "Selected repositories".into();
+            }
+            if let Some(organization) = &self.scope_state.default.organization {
+                return organization.as_str().to_owned();
+            }
+        }
+        match &self.scope_state.account {
+            AccountChoice::Default | AccountChoice::Personal => self
+                .viewer
+                .as_ref()
+                .map_or_else(|| "Personal".into(), |viewer| viewer.login.clone()),
+            AccountChoice::Organization(organization) => organization.as_str().to_owned(),
+        }
+    }
+
+    pub(super) fn scope_repository_label(&self) -> String {
+        let Some(repository) = &self.repository else {
+            if self.scope_state.account == AccountChoice::Default {
+                return match self.scope_state.default.repositories.as_slice() {
+                    [] => "All repositories".into(),
+                    [repository] => repository.to_string(),
+                    repositories => format!("{} selected repositories", repositories.len()),
+                };
+            }
+            return "All repositories".into();
+        };
+        let label = repository.to_string();
+        let account = match &self.scope_state.account {
+            AccountChoice::Default if self.scope_state.default.repositories.is_empty() => self
+                .scope_state
+                .default
+                .organization
+                .as_ref()
+                .map(|organization| organization.as_str()),
+            AccountChoice::Personal => self.viewer.as_ref().map(|viewer| viewer.login.as_str()),
+            AccountChoice::Organization(organization) => Some(organization.as_str()),
+            AccountChoice::Default => None,
+        };
+        let Some((owner, name)) = label.split_once('/') else {
+            return label;
+        };
+        if account.is_some_and(|account| owner.eq_ignore_ascii_case(account)) {
+            name.to_owned()
+        } else {
+            label
+        }
+    }
+
+    pub(super) fn open_scope_repositories(&mut self) {
+        let mut items = vec![(GithubAction::ScopeRepository(0), "All repositories".into())];
+        items.extend(self.scope_state.repositories.items.iter().enumerate().map(
+            |(index, repository)| {
+                (
+                    GithubAction::ScopeRepository(index + 1),
+                    repository.to_string(),
+                )
+            },
+        ));
+        if self.scope_state.repositories.loading {
+            items.push((GithubAction::ScopeRetry, "Loading…".into()));
+        } else if let Some(error) = &self.scope_state.repositories.error {
+            items.push((GithubAction::ScopeRetry, format!("{error} · Retry")));
+        } else if self.scope_state.repositories.cursor.is_some() {
+            items.push((GithubAction::ScopeMore, "Load more".into()));
+        }
+        let selected = self
+            .repository
+            .as_ref()
+            .and_then(|repository| {
+                self.scope_state
+                    .repositories
+                    .items
+                    .iter()
+                    .position(|item| item == repository)
+                    .map(|index| index + 1)
+            })
+            .unwrap_or(0);
+        let mut list = ModalListState::hidden(selected);
+        list.show();
+        let trigger = self
+            .menu
+            .as_ref()
+            .and_then(|menu| match (menu.kind, menu.trigger) {
+                (LocalMenuKind::Repositories, trigger) => Some(trigger),
+                (LocalMenuKind::Accounts, GithubAction::ChooseScope) => {
+                    Some(GithubAction::ChooseScope)
+                }
+                _ => None,
+            })
+            .unwrap_or(GithubAction::ChooseRepository);
+        self.menu = Some(LocalMenu {
+            kind: LocalMenuKind::Repositories,
+            trigger,
+            items,
+            list,
+            scroll: 0,
+        });
+        if !self.scope_state.repositories.loaded
+            && !self.scope_state.repositories.loading
+            && self.scope_state.repositories.error.is_none()
+        {
+            self.scope_state.repositories.loading = true;
+            self.enqueue(GithubRequest::ScopeRepositories {
+                cursor: None,
+                page_size: 50,
+            });
+            let items = self
+                .menu
+                .as_ref()
+                .map(|menu| menu.items.clone())
+                .unwrap_or_default();
+            if let Some(menu) = &mut self.menu {
+                menu.items = items
+                    .into_iter()
+                    .chain(std::iter::once((
+                        GithubAction::ScopeRetry,
+                        "Loading…".into(),
+                    )))
+                    .collect();
+            }
+        }
+    }
+
+    fn select_scope_account(&mut self, index: usize) {
+        let account = match index {
+            0 => AccountChoice::Default,
+            1 => AccountChoice::Personal,
+            index => {
+                let Some(account) = self
+                    .scope_state
+                    .organizations
+                    .items
+                    .get(index - 2)
+                    .and_then(|organization| {
+                        crate::app::state::GithubOrganization::parse(&organization.login)
+                            .ok()
+                            .flatten()
+                            .map(AccountChoice::Organization)
+                    })
+                else {
+                    return;
+                };
+                account
+            }
+        };
+        self.scope_state.account = account.clone();
+        self.scope = match account {
+            AccountChoice::Default => self.scope_state.default.clone(),
+            AccountChoice::Personal => ResolvedGithubScope {
+                repositories: Vec::new(),
+                organization: None,
+            },
+            AccountChoice::Organization(organization) => ResolvedGithubScope {
+                repositories: Vec::new(),
+                organization: Some(organization),
+            },
+        };
+        self.repository = None;
+        self.scope_state.repositories = ScopeCatalog::default();
+        self.refresh();
+        self.open_scope_repositories();
+    }
+
+    pub(super) fn scope_account_items(&self) -> Vec<(GithubAction, String)> {
+        let mut items = vec![
+            (GithubAction::ScopeAccount(0), self.default_scope_label()),
+            (
+                GithubAction::ScopeAccount(1),
+                self.viewer.as_ref().map_or_else(
+                    || "Personal".into(),
+                    |viewer| format!("Personal ({})", viewer.login),
+                ),
+            ),
+        ];
+        items.extend(self.scope_state.organizations.items.iter().enumerate().map(
+            |(index, organization)| {
+                (
+                    GithubAction::ScopeAccount(index + 2),
+                    format!("Organization {}", organization.login),
+                )
+            },
+        ));
+        if self.scope_state.organizations.loading {
+            items.push((GithubAction::ScopeRetry, "Loading organizations…".into()));
+        } else if let Some(error) = &self.scope_state.organizations.error {
+            items.push((
+                GithubAction::ScopeRetry,
+                format!("{error} · Retry organizations"),
+            ));
+        } else if self.scope_state.organizations.cursor.is_some() {
+            items.push((GithubAction::ScopeMore, "Load more organizations".into()));
+        }
+        items
+    }
+
     pub(super) fn current_url(&self) -> Option<String> {
         if self.focus == Focus::Detail {
             if let Some(url) = self.selected_link.and_then(|key| self.link_url(key)) {
@@ -90,9 +295,6 @@ impl GithubScreen {
         ];
         if self.has_more() {
             actions.push((A::More, "Load more".into()));
-        }
-        if self.repository.is_some() {
-            actions.push((A::ResetRepository, "Reset repository narrowing".into()));
         }
         actions.extend(
             GithubTab::ALL
@@ -203,6 +405,33 @@ impl GithubScreen {
         actions.push((A::CloseScreen, "Close GitHub".into()));
         actions
     }
+    pub(super) fn local_overflow_actions(&self) -> Vec<(GithubAction, String)> {
+        use GithubAction as A;
+        let queue_visible = self
+            .geometry
+            .controls
+            .iter()
+            .any(|control| control.action == A::ChooseQueue);
+        let visible = |action: &A| {
+            self.geometry
+                .controls
+                .iter()
+                .any(|control| control.action == *action)
+        };
+        let mut actions = self
+            .contextual_actions()
+            .into_iter()
+            .filter(|(action, _)| {
+                !matches!(action, A::ChooseAction | A::CloseScreen | A::Queue(_))
+                    && !visible(action)
+            })
+            .collect::<Vec<_>>();
+        if !self.available_queues().is_empty() && !queue_visible {
+            actions.push((A::ChooseQueue, "Choose queue".into()));
+        }
+        actions
+    }
+
     pub fn activate(&mut self, action: GithubAction) -> Vec<GithubEffect> {
         use GithubAction as A;
         if self.submitting {
@@ -223,10 +452,152 @@ impl GithubScreen {
         {
             return Vec::new();
         }
-        if !matches!(action, A::ChooseQueue | A::ChooseAction) {
+        if !matches!(
+            action,
+            A::ChooseQueue
+                | A::ChooseAction
+                | A::ChooseAccount
+                | A::ChooseRepository
+                | A::ChooseScope
+                | A::ScopeAccount(_)
+                | A::ScopeRepository(_)
+                | A::ScopeMore
+                | A::ScopeRetry
+        ) {
             self.menu = None;
         }
         let previous_dialog = self.dialog.as_ref().map(std::mem::discriminant);
+        if matches!(action, A::ChooseAccount | A::ChooseScope) {
+            let items = self.scope_account_items();
+            let selected = match &self.scope_state.account {
+                AccountChoice::Default => 0,
+                AccountChoice::Personal => 1,
+                AccountChoice::Organization(selected) => self
+                    .scope_state
+                    .organizations
+                    .items
+                    .iter()
+                    .position(|organization| organization.login == selected.as_str())
+                    .map_or(0, |index| index + 2),
+            };
+            let mut list = ModalListState::hidden(selected);
+            list.show();
+            self.menu = Some(LocalMenu {
+                kind: LocalMenuKind::Accounts,
+                trigger: action,
+                items,
+                list,
+                scroll: 0,
+            });
+            if !self.scope_state.organizations.loaded
+                && !self.scope_state.organizations.loading
+                && self.scope_state.organizations.error.is_none()
+            {
+                self.scope_state.organizations.loading = true;
+                self.enqueue(GithubRequest::Organizations {
+                    cursor: None,
+                    page_size: 50,
+                });
+                let items = self.scope_account_items();
+                if let Some(menu) = &mut self.menu {
+                    menu.items = items;
+                }
+            }
+            return Vec::new();
+        }
+        if action == A::ChooseRepository {
+            self.open_scope_repositories();
+            return Vec::new();
+        }
+        if let A::ScopeAccount(index) = action {
+            self.select_scope_account(index);
+            return Vec::new();
+        }
+        if let A::ScopeRepository(index) = action {
+            self.repository = if index == 0 {
+                None
+            } else {
+                let Some(repository) = self.scope_state.repositories.items.get(index - 1).cloned()
+                else {
+                    return Vec::new();
+                };
+                Some(repository)
+            };
+            self.run_sha = None;
+            self.menu = None;
+            self.refresh();
+            return Vec::new();
+        }
+        if action == A::ScopeMore {
+            let accounts = self
+                .menu
+                .as_ref()
+                .is_some_and(|menu| menu.kind == LocalMenuKind::Accounts);
+            if accounts {
+                if self.scope_state.organizations.loading {
+                    return Vec::new();
+                }
+                if let Some(cursor) = self.scope_state.organizations.cursor.clone() {
+                    self.scope_state.organizations.loading = true;
+                    self.enqueue(GithubRequest::Organizations {
+                        cursor: Some(cursor),
+                        page_size: 50,
+                    });
+                    let items = self.scope_account_items();
+                    if let Some(menu) = &mut self.menu {
+                        menu.items = items;
+                    }
+                }
+            } else {
+                if self.scope_state.repositories.loading {
+                    return Vec::new();
+                }
+                if let Some(cursor) = self.scope_state.repositories.cursor.clone() {
+                    self.scope_state.repositories.loading = true;
+                    self.enqueue(GithubRequest::ScopeRepositories {
+                        cursor: Some(cursor),
+                        page_size: 50,
+                    });
+                    self.open_scope_repositories();
+                }
+            }
+            return Vec::new();
+        }
+        if action == A::ScopeRetry {
+            let accounts = self
+                .menu
+                .as_ref()
+                .is_some_and(|menu| menu.kind == LocalMenuKind::Accounts);
+            if accounts {
+                if self.scope_state.organizations.loading {
+                    return Vec::new();
+                }
+                let cursor = self.scope_state.organizations.cursor.clone();
+                self.scope_state.organizations.error = None;
+                self.scope_state.organizations.loading = true;
+                self.enqueue(GithubRequest::Organizations {
+                    cursor,
+                    page_size: 50,
+                });
+                let items = self.scope_account_items();
+                if let Some(menu) = &mut self.menu {
+                    menu.items = items;
+                }
+            } else {
+                if self.scope_state.repositories.loading {
+                    return Vec::new();
+                }
+                let cursor = self.scope_state.repositories.cursor.clone();
+                self.scope_state.repositories.error = None;
+                self.scope_state.repositories.loading = true;
+                self.enqueue(GithubRequest::ScopeRepositories {
+                    cursor,
+                    page_size: 50,
+                });
+                self.open_scope_repositories();
+            }
+            return Vec::new();
+        }
         match action {
             A::Palette => return vec![GithubEffect::OpenPalette],
             A::CloseScreen => {
@@ -269,15 +640,7 @@ impl GithubScreen {
                             .map(|&queue| (A::Queue(queue), queue_label(queue).into()))
                             .collect()
                     } else {
-                        self.contextual_actions()
-                            .into_iter()
-                            .filter(|(action, _)| {
-                                !matches!(
-                                    action,
-                                    A::Tab(_) | A::Queue(_) | A::Detail(_) | A::SelectFile(_)
-                                )
-                            })
-                            .collect()
+                        self.local_overflow_actions()
                     };
                     if !items.is_empty() {
                         let selected = items
@@ -286,8 +649,19 @@ impl GithubScreen {
                             .unwrap_or(0);
                         let mut list = ModalListState::hidden(selected);
                         list.show();
+                        let trigger = if action == A::ChooseQueue
+                            && self
+                                .menu
+                                .as_ref()
+                                .is_some_and(|menu| menu.trigger == A::ChooseAction)
+                        {
+                            A::ChooseAction
+                        } else {
+                            action
+                        };
                         self.menu = Some(LocalMenu {
-                            trigger: action,
+                            kind: LocalMenuKind::Actions,
+                            trigger,
                             items,
                             list,
                             scroll: 0,
@@ -321,11 +695,6 @@ impl GithubScreen {
             }
             A::More => self.more(),
             A::Filter => self.dialog = Some(Dialog::Filter(TextBuffer::new(self.filter.clone()))),
-            A::ResetRepository => {
-                self.repository = None;
-                self.run_sha = None;
-                self.refresh();
-            }
             A::Back => {
                 self.invalidate();
                 self.clear_detail();
@@ -599,6 +968,13 @@ impl GithubScreen {
                     self.refresh();
                 }
             }
+            A::ChooseAccount
+            | A::ChooseRepository
+            | A::ChooseScope
+            | A::ScopeAccount(_)
+            | A::ScopeRepository(_)
+            | A::ScopeMore
+            | A::ScopeRetry => {}
         }
         if self.dialog.as_ref().map(std::mem::discriminant) != previous_dialog {
             self.control_focus = 0;

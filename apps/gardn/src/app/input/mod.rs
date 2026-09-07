@@ -504,10 +504,15 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.default_client_view.github.is_some() {
+        if self.default_client_view.github.is_some()
+            || self.default_client_view.github_host.is_some()
+        {
             let normalized = self.state.normalize_host_mouse_event(mouse);
             let handled = self.with_default_github_view(|app, view| {
-                let owner = view.github_pane_id;
+                let owner = view
+                    .github_host
+                    .as_ref()
+                    .map(crate::app::view_state::GithubHost::root_pane);
                 let handled = app.handle_github_mouse_for_view(view, normalized);
                 if handled && matches!(normalized.kind, MouseEventKind::Down(_)) {
                     if let Some(pane_id) = owner {

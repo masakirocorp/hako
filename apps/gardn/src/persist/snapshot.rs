@@ -319,6 +319,11 @@ struct LegacyWorkspaceSnapshot {
 pub struct TabSnapshot {
     #[serde(default)]
     pub custom_name: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::workspace::TabRole::is_terminal"
+    )]
+    pub role: crate::workspace::TabRole,
     pub layout: LayoutSnapshot,
     pub panes: HashMap<u32, PaneSnapshot>,
     pub zoomed: bool,
@@ -406,6 +411,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
         let identity_cwd = legacy_identity_cwd(&snap);
         let tab = TabSnapshot {
             custom_name: None,
+            role: crate::workspace::TabRole::Terminal,
             layout: snap.layout,
             panes: snap.panes,
             zoomed: snap.zoomed,
@@ -921,6 +927,7 @@ fn capture_tab(
     }
     TabSnapshot {
         custom_name: tab.custom_name.clone(),
+        role: tab.role,
         layout: capture_node(tab.layout.root()),
         panes,
         zoomed: tab.zoomed,
@@ -1516,6 +1523,7 @@ mod tests {
                 next_public_tab_number: 2,
                 tabs: vec![TabSnapshot {
                     custom_name: Some("api".to_string()),
+                    role: crate::workspace::TabRole::Github,
                     layout: LayoutSnapshot::Split {
                         direction: DirectionSnapshot::Horizontal,
                         ratio: 0.5,
@@ -1552,6 +1560,10 @@ mod tests {
             Some("pi-mono")
         );
         assert_eq!(restored.workspaces[0].tabs.len(), 1);
+        assert_eq!(
+            restored.workspaces[0].tabs[0].role,
+            crate::workspace::TabRole::Github
+        );
         assert_eq!(restored.workspaces[0].tabs[0].panes.len(), 2);
         assert_eq!(
             restored.workspaces[0].tabs[0].panes[&0].cwd,
@@ -1673,6 +1685,7 @@ mod tests {
         assert_eq!(ws.identity_cwd, PathBuf::from("/tmp/pion"));
         assert_eq!(ws.active_tab, 0);
         assert_eq!(ws.tabs.len(), 1);
+        assert_eq!(ws.tabs[0].role, crate::workspace::TabRole::Terminal);
         assert_eq!(ws.tabs[0].focused, Some(1));
         assert_eq!(ws.tabs[0].root_pane, Some(0));
         assert_eq!(ws.tabs[0].panes[&0].cwd, PathBuf::from("/tmp/pion"));

@@ -34,6 +34,8 @@ impl GithubScreen {
         self.pending.clear();
         self.queued.clear();
         self.awaiting_ids.clear();
+        self.scope_state.organizations.loading = false;
+        self.scope_state.repositories.loading = false;
         self.error = None;
         self.notice = None;
     }
@@ -73,10 +75,16 @@ impl GithubScreen {
                 repository: self.repository.clone(),
                 page_size: 30,
             }),
-            GithubTab::Repositories => self.enqueue(GithubRequest::Repositories {
-                cursor: None,
-                page_size: 50,
-            }),
+            GithubTab::Repositories => {
+                if let Some(repository) = self.repository.clone() {
+                    self.entries.push(Entry::Repository(repository));
+                } else {
+                    self.enqueue(GithubRequest::Repositories {
+                        cursor: None,
+                        page_size: 50,
+                    });
+                }
+            }
             GithubTab::PullRequests | GithubTab::Issues => self.request_queue(None),
             GithubTab::Actions => {
                 if let Some(repository) = self.repository.clone() {
@@ -240,10 +248,22 @@ impl GithubScreen {
         if mutation {
             self.submitting = false;
         }
+        let scope_error = matches!(
+            &tracked.request,
+            GithubRequest::Organizations { .. } | GithubRequest::ScopeRepositories { .. }
+        );
         let response = match result {
             Ok(response) => response,
             Err(error) => {
                 match tracked.request {
+                    GithubRequest::Organizations { .. } => {
+                        self.scope_state.organizations.loading = false;
+                        self.scope_state.organizations.error = Some(error.clone());
+                    }
+                    GithubRequest::ScopeRepositories { .. } => {
+                        self.scope_state.repositories.loading = false;
+                        self.scope_state.repositories.error = Some(error.clone());
+                    }
                     GithubRequest::Runs {
                         repository, cursor, ..
                     } if self.repository.is_none() => {
@@ -256,13 +276,65 @@ impl GithubScreen {
                     }
                     _ => {}
                 }
-                self.error = Some(error);
+                let menu_kind = self.menu.as_ref().map(|menu| menu.kind);
+                if menu_kind == Some(LocalMenuKind::Accounts) {
+                    let items = self.scope_account_items();
+                    if let Some(menu) = &mut self.menu {
+                        menu.items = items;
+                    }
+                } else if menu_kind == Some(LocalMenuKind::Repositories) {
+                    self.open_scope_repositories();
+                }
+                if !scope_error {
+                    self.error = Some(error);
+                }
                 self.compute(self.geometry.area);
                 return;
             }
         };
         match response {
-            GithubResponse::Viewer(viewer) => self.viewer = Some(viewer),
+            GithubResponse::Viewer(viewer) => {
+                self.viewer = Some(viewer);
+                let items = self.scope_account_items();
+                if let Some(menu) = &mut self.menu {
+                    if menu.kind == LocalMenuKind::Accounts {
+                        menu.items = items;
+                    }
+                }
+            }
+            GithubResponse::Organizations(page) => {
+                self.scope_state.organizations.loading = false;
+                self.scope_state.organizations.loaded = true;
+                self.scope_state.organizations.cursor = page.next_cursor;
+                self.scope_state.organizations.items.extend(page.items);
+                self.scope_state
+                    .organizations
+                    .items
+                    .sort_by(|left, right| left.login.cmp(&right.login));
+                self.scope_state
+                    .organizations
+                    .items
+                    .dedup_by(|left, right| left.login == right.login);
+                let items = self.scope_account_items();
+                if let Some(menu) = &mut self.menu {
+                    if menu.kind == LocalMenuKind::Accounts {
+                        menu.items = items;
+                    }
+                }
+            }
+            GithubResponse::ScopeRepositories(page) => {
+                self.scope_state.repositories.loading = false;
+                self.scope_state.repositories.loaded = true;
+                self.scope_state.repositories.items.extend(page.items);
+                self.scope_state.repositories.cursor = page.next_cursor;
+                if self
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.kind == LocalMenuKind::Repositories)
+                {
+                    self.open_scope_repositories();
+                }
+            }
             GithubResponse::Repositories(page) => {
                 if self.tab == GithubTab::Actions {
                     self.catalog_cursor = page.next_cursor;
