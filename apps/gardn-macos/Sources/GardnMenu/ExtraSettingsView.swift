@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct ExtraSettingsView: View {
@@ -21,7 +20,6 @@ struct ExtraSettingsView: View {
     var checkForUpdates: () -> Void
     @State private var pane = Pane.servers
     @State private var remoteTarget = ""
-    @FocusState private var sshFieldFocused: Bool
 
     var body: some View {
         Group {
@@ -35,19 +33,14 @@ struct ExtraSettingsView: View {
         .frame(minWidth: 520, minHeight: 400)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Picker("Pane", selection: $pane) {
+                Picker("Settings pane", selection: $pane) {
                     ForEach(Pane.allCases) { item in
                         Text(item.title).tag(item)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 200)
-            }
-        }
-        .onAppear {
-            sshFieldFocused = false
-            DispatchQueue.main.async {
-                NSApp.keyWindow?.makeFirstResponder(nil)
+                .labelsHidden()
+                .frame(width: 220)
             }
         }
     }
@@ -92,25 +85,27 @@ struct ExtraSettingsView: View {
                 Text("Gardn watches one of these servers.")
             }
             Section("Add Remote Server") {
-                TextField("SSH target", text: $remoteTarget)
-                    .focused($sshFieldFocused)
+                HStack(spacing: 8) {
+                    TextField("SSH target", text: $remoteTarget, prompt: Text("user@host"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(addRemote)
+                    Button("Add", action: addRemote)
+                }
                 if let addError = catalog.addError {
                     Text(addError)
                         .foregroundStyle(.red)
                 }
-                HStack {
-                    Spacer()
-                    Button("Add") {
-                        store.addRemoteCoordinator(target: remoteTarget, session: "")
-                        if catalog.addError == nil {
-                            remoteTarget = ""
-                        }
-                    }
-                    .disabled(remoteTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func addRemote() {
+        store.addRemoteCoordinator(target: remoteTarget, session: "")
+        if catalog.addError == nil {
+            remoteTarget = ""
+        }
     }
 }
 
