@@ -48,15 +48,19 @@ class DemoCaptureWorkflowTests(unittest.TestCase):
         commands = cliclick_commands(
             tuple(shot["keys"]), {"x": 10, "y": 20, "width": 1620, "height": 1008}
         )
+        self.assertIn("RightClickCell 6,28", shot["keys"])
         self.assertTrue(any(item.startswith("rc:") for item in commands))
         self.assertFalse(any(item.startswith("kd:") for item in commands))
+
     def test_workflow_cells_fit_capture_window(self) -> None:
         for shot in SHOTS:
             for key in shot["keys"]:
                 kind, _, coords = key.partition(" ")
                 if not kind.endswith("Cell"):
                     continue
-                _, _, row_text = coords.partition(",")
+                col_text, _, row_text = coords.partition(",")
+                self.assertGreaterEqual(float(col_text), 0)
+                self.assertLess(float(col_text), CAPTURE_WINDOW["columns"])
                 self.assertGreaterEqual(float(row_text), 0)
                 self.assertLess(float(row_text), CAPTURE_WINDOW["rows"])
 

@@ -106,13 +106,13 @@ SHOTS = (
         "name": "follow-up",
         "theme": "day",
         "video": True,
-        "keys": pointer("RightClick", 8, 24) + ("Wait 1200",),
+        "keys": pointer("RightClick", 6, 28) + ("Wait 1200",),
     },
     {
         "name": "follow-up",
         "theme": "night",
         "video": True,
-        "keys": pointer("RightClick", 8, 24) + ("Wait 1200",),
+        "keys": pointer("RightClick", 6, 28) + ("Wait 1200",),
     },
     {
         "name": "collapsed-status",
