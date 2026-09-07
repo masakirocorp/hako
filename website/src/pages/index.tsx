@@ -1,14 +1,7 @@
 import { Link } from "fumapress/client";
 import { canonicalUrl } from "../site-url";
-import {
-  CTASection,
-  FeatureGrid,
-  Footer,
-  Hero,
-  PlatformCard,
-  SessionShot,
-  Workflow,
-} from "../marketing";
+import { CTASection, FeatureGrid, Footer, Hero, PlatformCard, Workflow } from "../marketing";
+import { DemoGallery } from "../demo-gallery";
 
 export default function HomePage() {
   return (
@@ -63,37 +56,91 @@ export default function HomePage() {
           </p>
         </Hero>
 
-        <SessionShot
-          title="The session owns your work; clients are just views"
-          caption={
-            <>
-              Spaces, groups, tabs, pane layouts, runtimes, and agent state belong to the session. A
-              client only renders its own view. Read the{" "}
-              <Link href="/docs/concepts">product concepts</Link> for the full vocabulary.
-            </>
-          }
-        />
-
-        <SessionShot
-          headingId="groups-shot-title"
-          src="/groups.png"
-          srcDark="/groups-night.png"
-          video="/groups.mp4"
-          videoDark="/groups-night.mp4"
-          title="Filter the session by group"
-          alt="The Groups menu open over a Gardn session, listing All plus product, ops, and commerce."
-          caption="Groups keep product, ops, and commerce in one session without mixing their spaces."
-        />
-
-        <SessionShot
-          headingId="follow-up-shot-title"
-          src="/follow-up.png"
-          srcDark="/follow-up-night.png"
-          video="/follow-up.mp4"
-          videoDark="/follow-up-night.mp4"
-          title="Manage follow-up from an agent row"
-          alt="The Remove from Follow Up menu on the claude agent in Follow Up, with triage, working, and idle lists in the sidebar."
-          caption="Triage, Follow Up, and Working are first-class. Right-click an agent row to add or remove Follow Up without leaving the current space."
+        <DemoGallery
+          heading="See the session"
+          clips={[
+            {
+              id: "session",
+              label: "Session",
+              title: "The session owns your work; clients are just views",
+              caption:
+                "Spaces, groups, tabs, pane layouts, runtimes, and agent state belong to the session. A client only renders its own view.",
+              alt: "A Gardn session with product, ops, and commerce groups, a split checkout space, and agents in triage, working, and idle.",
+              src: "/session.png",
+              srcDark: "/session-night.png",
+              video: "/session.mp4",
+              videoDark: "/session-night.mp4",
+            },
+            {
+              id: "groups",
+              label: "Groups",
+              title: "Filter the session by group",
+              caption: "Open All, pick a group, and the sidebar keeps only that group's spaces.",
+              alt: "A Gardn session filtered to the commerce group, showing billing and inventory spaces.",
+              src: "/groups.png",
+              srcDark: "/groups-night.png",
+              video: "/groups.mp4",
+              videoDark: "/groups-night.mp4",
+            },
+            {
+              id: "agents",
+              label: "Agents",
+              title: "Filter agents to this group",
+              caption:
+                "Open All on Agents, pick Group, and the list keeps only agents in the current group.",
+              alt: "A Gardn agent list scoped to the current group, with only that group's agents in Triage, Follow Up, Working, and Idle.",
+              src: "/agents.png",
+              srcDark: "/agents-night.png",
+              video: "/agents.mp4",
+              videoDark: "/agents-night.mp4",
+            },
+            {
+              id: "follow-up",
+              label: "Follow-up",
+              title: "Manage follow-up from an agent row",
+              caption:
+                "Triage, Follow Up, and Working are first-class. Right-click an agent row to add or remove Follow Up without leaving the current space.",
+              alt: "The agent context menu on a blocked omp row, with an Add to Follow Up action.",
+              src: "/follow-up.png",
+              srcDark: "/follow-up-night.png",
+              video: "/follow-up.mp4",
+              videoDark: "/follow-up-night.mp4",
+            },
+            {
+              id: "navigator",
+              label: "Navigator",
+              title: "Jump through the session from the navigator",
+              caption: "Search groups, spaces, tabs, and panes without leaving the current view.",
+              alt: "The Workspace Navigator open over a Gardn session, listing product, ops, and commerce with spaces, panes, and agent counts.",
+              src: "/commands.png",
+              srcDark: "/commands-night.png",
+              video: "/commands.mp4",
+              videoDark: "/commands-night.mp4",
+            },
+            {
+              id: "collapsed",
+              label: "Collapsed rail",
+              title: "Read status from the collapsed rail",
+              caption:
+                "Collapse the sidebar to a rail. Hover a compact row to read the space name and state.",
+              alt: "A collapsed Gardn sidebar rail with compact group icons, space status, and a hover card showing catalog is blocked.",
+              src: "/collapsed.png",
+              srcDark: "/collapsed-night.png",
+              video: "/collapsed.mp4",
+              videoDark: "/collapsed-night.mp4",
+            },
+            {
+              id: "triage",
+              label: "Triage",
+              title: "Jump to a blocked agent from Triage",
+              caption: "Click a Triage row to focus that agent's space, tab, and pane.",
+              alt: "A Gardn session jumped to catalog search from the blocked omp agent in Triage.",
+              src: "/triage.png",
+              srcDark: "/triage-night.png",
+              video: "/triage.mp4",
+              videoDark: "/triage-night.mp4",
+            },
+          ]}
         />
 
         <Workflow
