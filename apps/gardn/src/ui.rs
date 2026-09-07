@@ -2153,6 +2153,28 @@ mod tests {
             .assert_cursor_position((focused.inner_rect.x + 4, focused.inner_rect.y));
     }
 
+    #[tokio::test]
+    async fn github_hides_the_underlying_terminal_cursor() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut workspace = Workspace::test_new("test");
+        let pane = workspace.tabs[0].root_pane;
+        workspace.insert_test_runtime(
+            pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(20, 5, b"left"),
+        );
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Github;
+
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+
+        terminal.backend_mut().assert_cursor_position((0, 0));
+    }
+
     #[test]
     fn mobile_width_uses_header_and_full_width_terminal() {
         let mut app = crate::app::state::AppState::test_new();

@@ -35,7 +35,7 @@ pub use self::{
         derive_label_from_cwd, derive_label_from_location, fallback_label_from_cwd, git_branch,
         git_status_cache_key, GitStatusCacheEntry,
     },
-    tab::{NewPane, Tab},
+    tab::{NewPane, Tab, TabRole},
 };
 
 pub const DEFAULT_GROUP_ID: &str = "default";
@@ -1625,6 +1625,7 @@ impl Workspace {
         let tab = Tab {
             custom_name: None,
             number: 1,
+            role: TabRole::Terminal,
             root_pane: root_id,
             layout,
             panes,
@@ -1689,6 +1690,7 @@ impl Workspace {
         let tab = Tab {
             custom_name: name.map(str::to_string),
             number: self.next_public_tab_number,
+            role: TabRole::Terminal,
             root_pane: root_id,
             layout,
             panes,

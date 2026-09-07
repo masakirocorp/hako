@@ -828,6 +828,7 @@ fn restore_tab(
             crate::workspace::Tab {
                 custom_name: snap.custom_name.clone(),
                 number,
+                role: snap.role,
                 root_pane,
                 layout,
                 panes,
@@ -1137,6 +1138,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    role: crate::workspace::TabRole::Terminal,
                     layout: LayoutSnapshot::Pane(10),
                     panes: HashMap::from([(
                         10,
@@ -1257,6 +1259,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    role: crate::workspace::TabRole::Terminal,
                     layout: LayoutSnapshot::Pane(7),
                     panes: HashMap::from([(
                         7,
@@ -1323,7 +1326,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_preserves_public_tab_and_pane_identity_after_remap() {
+    async fn restore_preserves_public_tab_pane_and_role_identity_after_remap() {
         let cwd = std::env::current_dir().unwrap();
         let pane = |id: u32| {
             (
@@ -1376,6 +1379,7 @@ mod tests {
                 next_public_tab_number: 6,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    role: crate::workspace::TabRole::Github,
                     layout: LayoutSnapshot::Split {
                         direction: super::super::snapshot::DirectionSnapshot::Horizontal,
                         ratio: 0.5,
@@ -1426,6 +1430,7 @@ mod tests {
         assert_eq!(pane_numbers, vec![1, 3]);
         assert_eq!(workspace.next_public_pane_number, 4);
         assert_eq!(workspace.tabs[0].number, 5);
+        assert_eq!(workspace.tabs[0].role, crate::workspace::TabRole::Github);
         assert_eq!(workspace.next_public_tab_number, 6);
     }
 
@@ -1445,6 +1450,7 @@ mod tests {
             next_public_tab_number: 0,
             tabs: vec![TabSnapshot {
                 custom_name: None,
+                role: crate::workspace::TabRole::Terminal,
                 layout: LayoutSnapshot::Split {
                     direction: super::super::snapshot::DirectionSnapshot::Horizontal,
                     ratio: 0.5,
@@ -1727,6 +1733,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    role: crate::workspace::TabRole::Terminal,
                     layout: LayoutSnapshot::Pane(7),
                     panes: HashMap::from([(
                         7,
@@ -2116,6 +2123,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    role: crate::workspace::TabRole::Terminal,
                     layout: LayoutSnapshot::Pane(0),
                     panes: HashMap::from([(
                         0,
@@ -2229,6 +2237,7 @@ mod tests {
                 group_id: crate::workspace::DEFAULT_GROUP_ID.into(),
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    role: crate::workspace::TabRole::Terminal,
                     layout: LayoutSnapshot::Pane(0),
                     panes: HashMap::from([(
                         0,
@@ -2570,6 +2579,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    role: crate::workspace::TabRole::Terminal,
                     layout: LayoutSnapshot::Pane(0),
                     panes,
                     zoomed: false,

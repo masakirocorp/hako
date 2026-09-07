@@ -62,6 +62,40 @@ impl ClientTabViewKey {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct GithubHost {
+    pub(crate) workspace_id: String,
+    pub(crate) tab_number: usize,
+    pub(crate) source_focus: Option<PaneFocusTarget>,
+    pub(crate) scope_settings: (
+        crate::github::GithubRepositoryScope,
+        Option<crate::app::state::GithubOrganization>,
+    ),
+    pub(crate) tab: GithubHostTab,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum GithubHostTab {
+    Pending {
+        terminal_id: TerminalId,
+        root_pane: PaneId,
+        scope: crate::github::ResolvedGithubScope,
+    },
+    Committed {
+        root_pane: PaneId,
+    },
+}
+
+impl GithubHost {
+    pub(crate) fn root_pane(&self) -> PaneId {
+        match &self.tab {
+            GithubHostTab::Pending { root_pane, .. } | GithubHostTab::Committed { root_pane } => {
+                *root_pane
+            }
+        }
+    }
+}
+
 /// Client-scoped effect produced by app logic and applied to matching views.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ClientViewEffect {
@@ -355,12 +389,7 @@ pub(crate) struct ClientViewState {
     pub(crate) agent_profile_picker: AgentProfilePickerState,
     pub(crate) git_repo_picker: GitRepoPickerState,
     pub(crate) github: Option<crate::github::screen::GithubScreen>,
-    pub(crate) github_workspace_id: Option<String>,
-    pub(crate) github_pane_id: Option<PaneId>,
-    pub(crate) github_scope_settings: Option<(
-        crate::github::GithubRepositoryScope,
-        Option<crate::app::state::GithubOrganization>,
-    )>,
+    pub(crate) github_host: Option<GithubHost>,
     pub(crate) context_menu: Option<ContextMenuState>,
     pub(crate) selection: Option<crate::selection::Selection>,
     pub(crate) selection_autoscroll: Option<SelectionAutoscroll>,
@@ -474,9 +503,7 @@ impl ClientViewState {
             agent_profile_picker: state.agent_profile_picker.clone(),
             git_repo_picker: state.git_repo_picker.clone(),
             github: None,
-            github_workspace_id: None,
-            github_pane_id: None,
-            github_scope_settings: None,
+            github_host: None,
             context_menu: state.context_menu.clone(),
             selection: state.selection.clone(),
             selection_autoscroll: state.selection_autoscroll.clone(),
@@ -971,6 +998,15 @@ impl ClientViewState {
             .get(&ClientTabViewKey::new(workspace_id, tab_number))
             .copied()
     }
+    pub(crate) fn focused_tab_is_github(&self, state: &AppState) -> bool {
+        let Some(ws_idx) = self.active_workspace else {
+            return false;
+        };
+        let Some(tab_idx) = self.active_tab_index_for_workspace(state, ws_idx) else {
+            return false;
+        };
+        state.workspaces[ws_idx].tabs[tab_idx].role == crate::workspace::TabRole::Github
+    }
 
     pub(crate) fn active_tab_index_for_workspace(
         &self,
@@ -1282,8 +1318,9 @@ impl ClientViewState {
     pub(crate) fn github_is_focused(&self, state: &AppState) -> bool {
         self.github.is_some()
             && self.current_pane_focus_target(state).is_some_and(|target| {
-                self.github_workspace_id.as_ref() == Some(&target.workspace_id)
-                    && self.github_pane_id == Some(target.pane_id)
+                self.github_host.as_ref().is_some_and(|host| {
+                    host.workspace_id == target.workspace_id && host.root_pane() == target.pane_id
+                })
             })
     }
 
@@ -1304,15 +1341,16 @@ impl ClientViewState {
         else {
             return Rect::default();
         };
-        if self.github_workspace_id.as_ref() != Some(&workspace.id) {
+        if self.github_host.as_ref().map(|host| &host.workspace_id) != Some(&workspace.id) {
             return Rect::default();
         }
         let visible_tab = self
             .active_tab_for_workspace(&workspace.id)
             .and_then(|idx| workspace.tabs.get(idx));
         if !visible_tab.is_some_and(|tab| {
-            self.github_pane_id
-                .is_some_and(|pane_id| tab.panes.contains_key(&pane_id))
+            self.github_host
+                .as_ref()
+                .is_some_and(|host| tab.root_pane == host.root_pane())
         }) {
             return Rect::default();
         }
@@ -1320,7 +1358,7 @@ impl ClientViewState {
             .computed
             .pane_infos
             .iter()
-            .find(|info| Some(info.id) == self.github_pane_id)
+            .find(|info| Some(info.id) == self.github_host.as_ref().map(GithubHost::root_pane))
         else {
             return Rect::default();
         };

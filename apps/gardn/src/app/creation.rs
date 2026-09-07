@@ -371,6 +371,7 @@ impl App {
         &mut self,
         ws_idx: usize,
         custom_name: Option<String>,
+        role: crate::workspace::TabRole,
     ) -> Result<TabCreation, String> {
         let previous_active = self.state.active;
         let previous_mode = self.state.mode;
@@ -386,20 +387,28 @@ impl App {
             self.begin_remote_tab(ws_idx, location, false, None, Vec::new())
                 .map(TabCreation::Pending)
         };
-        if let Ok(TabCreation::Committed(tab_idx)) = &result {
-            if let Some(name) = custom_name {
-                if let Some(tab) = self
-                    .state
-                    .workspaces
-                    .get_mut(ws_idx)
-                    .and_then(|workspace| workspace.tabs.get_mut(*tab_idx))
-                {
+        match &result {
+            Ok(TabCreation::Committed(tab_idx)) => {
+                let tab = &mut self.state.workspaces[ws_idx].tabs[*tab_idx];
+                tab.role = role;
+                if let Some(name) = custom_name {
                     tab.set_custom_name(name);
-                    self.schedule_session_save();
+                }
+                self.schedule_session_save();
+            }
+            Ok(TabCreation::Pending(terminal_id)) => {
+                if let Some(PendingRemoteCreation {
+                    plan: PendingRemoteCreationPlan::Tab { tab, .. },
+                    ..
+                }) = self.pending_remote_creations.get_mut(terminal_id)
+                {
+                    tab.role = role;
+                    if let Some(name) = custom_name {
+                        tab.set_custom_name(name);
+                    }
                 }
             }
-        } else if let (Ok(TabCreation::Pending(terminal_id)), Some(name)) = (&result, custom_name) {
-            self.set_pending_remote_container_name(terminal_id, name);
+            Err(_) => {}
         }
         self.state.active = previous_active;
         self.state.mode = previous_mode;
@@ -916,6 +925,16 @@ impl App {
     pub(crate) fn take_remote_creation_completions(&mut self) -> Vec<RemoteCreationCompletion> {
         std::mem::take(&mut self.remote_creation_completions)
     }
+    pub(crate) fn take_github_remote_completion(
+        &mut self,
+        terminal_id: &crate::terminal::TerminalId,
+    ) -> Option<RemoteCreationCompletion> {
+        let index = self
+            .remote_creation_completions
+            .iter()
+            .position(|completion| completion.terminal_id == *terminal_id)?;
+        Some(self.remote_creation_completions.remove(index))
+    }
 
     fn commit_remote_creation(
         &mut self,
@@ -1347,6 +1366,20 @@ impl App {
                 .map(|organization| organization.as_str().to_string()),
         }
     }
+    pub(crate) fn has_pending_github_tab_for_workspace(&self, workspace_id: &str) -> bool {
+        self.pending_remote_creations.values().any(|pending| {
+            matches!(
+                &pending.plan,
+                PendingRemoteCreationPlan::Tab {
+                    workspace_id: pending_workspace_id,
+                    tab,
+                    ..
+                } if pending_workspace_id == workspace_id
+                    && tab.role == crate::workspace::TabRole::Github
+            )
+        })
+    }
+
     pub(crate) fn set_pending_remote_container_name(
         &mut self,
         terminal_id: &crate::terminal::TerminalId,
@@ -1389,6 +1422,11 @@ impl App {
         }
         let mut changed = false;
         for completion in completions {
+            if self.github_remote_completion_owned(&completion.terminal_id) {
+                self.remote_creation_completions.push(completion);
+                changed = true;
+                continue;
+            }
             let Some(pending) = self
                 .pending_remote_api_responses
                 .remove(&completion.terminal_id)

@@ -22,10 +22,10 @@ impl GithubScreen {
             area.x + horizontal.min(area.width),
             area.y + vertical.min(area.height),
             area.width.saturating_sub(horizontal * 2),
-            area.height.saturating_sub(vertical * 2),
+            area.height.saturating_sub(vertical),
         );
         let stack =
-            crate::ui::modal_stack_areas(inner, if roomy { 6 } else { 3 }, 1, 0, u16::from(roomy));
+            crate::ui::modal_stack_areas(inner, if roomy { 3 } else { 2 }, 1, 0, u16::from(roomy));
         let header = stack.header;
         let close_width = 11.min(header.width);
         geometry.header = Rect::new(
@@ -41,6 +41,55 @@ impl GithubScreen {
                 label: "Close".into(),
             });
         }
+        if !geometry.header.is_empty() {
+            geometry.scope = geometry.header;
+            let roomy = geometry.header.width >= 60;
+            if roomy {
+                let title_width = 8.min(geometry.header.width);
+                let controls_width = geometry.header.width.saturating_sub(title_width);
+                let account_label = format!("/ {} ▾", self.scope_account_label());
+                let account_width = (UnicodeWidthStr::width(account_label.as_str()) + 1)
+                    .min(usize::from(controls_width)) as u16;
+                let repository_label = format!("/ {} ▾", self.scope_repository_label());
+                let repository_width = (UnicodeWidthStr::width(repository_label.as_str()) + 1)
+                    .min(usize::from(controls_width.saturating_sub(account_width)))
+                    as u16;
+                geometry.scope_controls.push(Control {
+                    area: Rect::new(
+                        geometry.header.x + title_width,
+                        geometry.header.y,
+                        account_width,
+                        1,
+                    ),
+                    action: A::ChooseAccount,
+                    label: account_label,
+                });
+                geometry.scope_controls.push(Control {
+                    area: Rect::new(
+                        geometry.header.x + title_width + account_width,
+                        geometry.header.y,
+                        repository_width,
+                        1,
+                    ),
+                    action: A::ChooseRepository,
+                    label: repository_label,
+                });
+            } else {
+                geometry.scope_controls.push(Control {
+                    area: geometry.header,
+                    action: A::ChooseScope,
+                    label: if geometry.header.width < 40 {
+                        "Scope ▾".into()
+                    } else {
+                        format!(
+                            "GitHub / {} / {} ▾",
+                            self.scope_account_label(),
+                            self.scope_repository_label()
+                        )
+                    },
+                });
+            }
+        }
         let row = |offset: u16| {
             Rect::new(
                 header.x,
@@ -49,71 +98,97 @@ impl GithubScreen {
                 u16::from(offset < header.height),
             )
         };
-        if roomy {
-            geometry.scope = row(1);
-        }
-        let tabs: Vec<_> = GithubTab::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(index, tab)| {
-                let label = if inner.width >= 66 {
-                    tab.label().to_owned()
-                } else if inner.width >= 46 || tab == self.tab {
-                    match tab {
-                        GithubTab::Repositories => "Repos",
-                        GithubTab::PullRequests => "PRs",
-                        _ => tab.label(),
-                    }
-                    .to_owned()
-                } else {
-                    (index + 1).to_string()
-                };
-                (A::Tab(tab), label)
-            })
-            .collect();
-        place_controls(
-            &mut geometry.controls,
-            row(if roomy { 3 } else { 1 }),
-            &tabs,
+        let primary = row(if roomy { 2 } else { 1 });
+        let overflow_width = 3.min(primary.width);
+        let available = Rect::new(
+            primary.x,
+            primary.y,
+            primary.width.saturating_sub(overflow_width + 1),
+            primary.height,
         );
+        let mut actions = Vec::new();
         let has_detail =
             self.detail.is_some() || self.selected_key.is_some() || self.selected_run.is_some();
-        let mut actions = Vec::new();
-        if !self.available_queues().is_empty() {
-            actions.push((
-                A::ChooseQueue,
-                format!("Queue: {} ▾", queue_label(self.queue)),
-            ));
-        }
-        actions.push((A::ChooseAction, "Actions…".into()));
         if has_detail {
             actions.push((A::Back, "Back".into()));
-            if self.item().is_some() {
+            if let Some(item) = self.item() {
                 actions.extend([
                     (A::Detail(DetailTab::Description), "Description".into()),
                     (A::Detail(DetailTab::Conversation), "Conversation".into()),
                 ]);
-                if self
-                    .item()
-                    .is_some_and(|item| item.summary.key.kind == ItemKind::PullRequest)
-                {
-                    actions.push((A::Detail(DetailTab::Diff), "Diff".into()));
+                if item.summary.key.kind == ItemKind::PullRequest {
+                    actions.extend([
+                        (A::Detail(DetailTab::Diff), "Diff".into()),
+                        (A::Detail(DetailTab::Checks), "Checks".into()),
+                    ]);
                 }
             }
         } else {
-            actions.extend([(A::Refresh, "Refresh".into()), (A::Filter, "Filter".into())]);
+            let visible_utilities = [
+                (A::Refresh, "Refresh".to_owned()),
+                (A::Filter, "Filter".to_owned()),
+            ];
+            for mode in 0..3 {
+                actions = GithubTab::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, tab)| {
+                        let label = match (mode, tab) {
+                            (0, _) => tab.label().to_owned(),
+                            (1, GithubTab::Repositories) => "Repos".into(),
+                            (1, GithubTab::PullRequests) => "PRs".into(),
+                            (1, _) => tab.label().to_owned(),
+                            _ => (index + 1).to_string(),
+                        };
+                        (A::Tab(tab), label)
+                    })
+                    .collect();
+                let width = actions
+                    .iter()
+                    .chain(&visible_utilities)
+                    .map(|(_, label)| UnicodeWidthStr::width(label.as_str()) + 3)
+                    .sum::<usize>()
+                    .saturating_sub(1);
+                if width <= usize::from(available.width) || mode == 2 {
+                    break;
+                }
+            }
+            actions.extend(visible_utilities);
+            if !self.available_queues().is_empty() {
+                actions.push((
+                    A::ChooseQueue,
+                    format!("Queue: {} ▾", queue_label(self.queue)),
+                ));
+            }
             if self.has_more() {
                 actions.push((A::More, "More".into()));
             }
-            if self.repository.is_some() {
-                actions.push((A::ResetRepository, "Reset repo".into()));
-            }
         }
-        place_controls(
-            &mut geometry.controls,
-            row(if roomy { 5 } else { 2 }),
-            &actions,
-        );
+        let mut x = available.x;
+        for (action, label) in actions {
+            let width = UnicodeWidthStr::width(label.as_str()).saturating_add(2);
+            if width > usize::from(available.right().saturating_sub(x)) || available.is_empty() {
+                break;
+            }
+            geometry.controls.push(Control {
+                area: Rect::new(x, available.y, width as u16, 1),
+                action,
+                label,
+            });
+            x = x.saturating_add(width as u16).saturating_add(1);
+        }
+        if !primary.is_empty() {
+            geometry.controls.push(Control {
+                area: Rect::new(
+                    primary.right() - overflow_width,
+                    primary.y,
+                    overflow_width,
+                    1,
+                ),
+                action: A::ChooseAction,
+                label: "…".into(),
+            });
+        }
         let content = stack.content;
         if has_detail && area.width >= 110 {
             let list_width = (area.width / 3).min(45);
@@ -245,7 +320,7 @@ impl GithubScreen {
             let mut actions = vec![(A::Cancel, "Cancel".into())];
             match &self.dialog {
                 Some(Dialog::Merge) => {
-                    actions.push((A::ChooseAction, "Actions…".into()));
+                    actions.push((A::ChooseAction, "…".into()));
                     actions.extend(self.merge_actions());
                 }
                 Some(Dialog::Labels { .. }) => {
@@ -273,10 +348,27 @@ impl GithubScreen {
                 &actions,
             );
         }
+        if self.menu.is_some()
+            && (self.geometry.area != area
+                || !self
+                    .geometry
+                    .controls
+                    .iter()
+                    .chain(&self.geometry.scope_controls)
+                    .map(|control| control.action)
+                    .eq(geometry
+                        .controls
+                        .iter()
+                        .chain(&geometry.scope_controls)
+                        .map(|control| control.action)))
+        {
+            self.menu = None;
+        }
         if let Some(menu) = &mut self.menu {
             if let Some(trigger) = geometry
                 .controls
                 .iter()
+                .chain(&geometry.scope_controls)
                 .find(|control| control.action == menu.trigger)
             {
                 let width = menu

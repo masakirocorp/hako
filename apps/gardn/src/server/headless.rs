@@ -424,7 +424,12 @@ impl HeadlessServer {
             needs_render |= self.app.poll_github();
             for client in self.clients.values_mut() {
                 if let Some(view) = client.view_state.as_mut() {
-                    needs_render |= self.app.pump_github_for_view(view);
+                    if view.github.is_some()
+                        || view.github_host.is_some()
+                        || view.focused_tab_is_github(&self.app.state)
+                    {
+                        needs_render |= self.app.pump_github_for_view(view);
+                    }
                 }
             }
 
@@ -1342,7 +1347,7 @@ impl HeadlessServer {
         if let Some(mut removed) = removed {
             self.remove_staged_clipboard_files(removed.staged_clipboard_files);
             if let Some(view) = removed.view_state.as_mut() {
-                self.app.close_github_for_view(view);
+                self.app.release_github_for_view(view);
             }
             if let Some(view) = removed.view_state.as_ref() {
                 let view_id = view.id();
@@ -5261,6 +5266,39 @@ mod tests {
             RenderEncoding::SemanticFrame,
             None,
         )
+    }
+
+    #[tokio::test]
+    async fn removing_client_preserves_github_tab_for_reattach() {
+        let mut server = test_headless_server();
+        server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("workspace")];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+        let mut view = crate::app::ClientViewState::from_default_client_state(&server.app.state);
+        server.app.open_github_for_view(&mut view);
+        let workspace_id = server.app.state.workspaces[0].id.clone();
+        let github_tab = server.app.state.workspaces[0]
+            .tabs
+            .iter()
+            .position(|tab| tab.role == crate::workspace::TabRole::Github)
+            .expect("GitHub tab");
+        let mut client = test_app_client(None, 1);
+        client.view_state = Some(view);
+        server.clients.insert(1, client);
+
+        server.remove_client(1);
+
+        assert_eq!(server.app.state.workspaces[0].tabs.len(), 2);
+        assert_eq!(
+            server.app.state.workspaces[0].tabs[github_tab].role,
+            crate::workspace::TabRole::Github
+        );
+        let mut reattached =
+            crate::app::ClientViewState::from_default_client_state(&server.app.state);
+        reattached.active_tabs.insert(workspace_id, github_tab);
+        assert!(server.app.pump_github_for_view(&mut reattached));
+        assert!(reattached.github.is_some());
     }
 
     #[tokio::test]

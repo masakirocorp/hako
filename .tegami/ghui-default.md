@@ -5,13 +5,13 @@ packages:
 
 # Bring GitHub into Gardn
 
-GitHub now opens as a built-in, client-local ratatui view inside the invoking pane using your existing `gh` authentication. Sidebars, tabs, and other panes remain usable. Closing GitHub restores the underlying terminal. The view uses Gardn's palette, theme, scrollbars, section spacing, and action controls. Its header shows GitHub and repository scope without repeating the Space name. There is no companion to install, pin, launch, or configure. Settings > Commands now contains only Browser (`terminal-browser`), Review (`hunk diff --watch`), and Editor (`fresh .`).
+GitHub now opens in a dedicated native tab named `GitHub` for the invoking client. The tab is durable session membership: it survives client detachment, disconnection, and session restart. Each client's GitHub screen and breadcrumb selection are transient. After reattach or restart, focusing the tab initializes them from the current Space scope. The source tab stays open, and only that client selects the new tab. Explicit GitHub Close or an ordinary tab close removes the dedicated tab and restores the source pane when it still exists. The header shows an interactive `GitHub / account / repository` breadcrumb. Narrow panes use one `Scope ▾` control and keep the adaptive toolbar on its own row. There is no companion to install, pin, launch, or configure.
 
-Each Space can use discovered GitHub repositories, exact selected repositories, or its Group organization. Automatic scope falls back to the Group organization or personal queues when no repositories are discovered. Repository narrowing never widens the base scope. Scope changes close an invalidated view. Reopen GitHub to apply current settings.
+Each Space provides the saved default scope. Breadcrumb browsing can switch to the Space default, personal queues, discovered organizations, all repositories, or one repository without changing saved settings. Repository narrowing never widens the selected account scope.
 
-Queue filters open a local menu containing only choices supported by the current tab, not the command palette. The active filter stays visible on the control. Controls, clickable rows, diff lines, and scrollbars show hover feedback without changing the selected item or keyboard focus.
+GitHub uses one adaptive control row. All five primary tabs remain visible. Refresh and Filter stay in the row when they fit. Queue, pagination, detail navigation, and selected-item commands move into the `…` menu as space decreases. The menu does not repeat visible controls. Controls, clickable rows, diff lines, and scrollbars show hover feedback without changing the selected item or keyboard focus.
 
-Actions… opens a local context menu instead of the global command palette. It offers commands for the current GitHub view or selected item, supports mouse and keyboard selection, and scrolls in compact panes. Ctrl+P keeps access to the global palette.
+The `…` menu stays local to GitHub instead of opening the global command palette. It supports mouse and keyboard selection and scrolls in compact panes. Ctrl+P keeps access to the global palette.
 
 Pull request and issue descriptions now separate the title, status, and secondary metadata from the body. Markdown headings, lists, checklists, emphasis, and code render with distinct styling. Links show readable labels and support mouse or keyboard activation. Empty metadata is hidden, and commit hashes use seven characters.
 

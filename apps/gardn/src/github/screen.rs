@@ -71,7 +71,13 @@ pub enum GithubAction {
     Refresh,
     More,
     Filter,
-    ResetRepository,
+    ChooseAccount,
+    ChooseRepository,
+    ChooseScope,
+    ScopeAccount(usize),
+    ScopeRepository(usize),
+    ScopeMore,
+    ScopeRetry,
     Back,
     Open,
     Browser,
@@ -159,6 +165,7 @@ pub enum Detail {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
+    Scope,
     List,
     Detail,
     Controls,
@@ -195,8 +202,48 @@ impl ListRow {
         }
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountChoice {
+    Default,
+    Personal,
+    Organization(crate::app::state::GithubOrganization),
+}
+#[derive(Debug, Clone)]
+pub struct ScopeCatalog<T> {
+    pub items: Vec<T>,
+    pub cursor: Option<String>,
+    pub loading: bool,
+    pub loaded: bool,
+    pub error: Option<String>,
+}
+
+impl<T> Default for ScopeCatalog<T> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            cursor: None,
+            loading: false,
+            loaded: false,
+            error: None,
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct ScopeState {
+    pub default: ResolvedGithubScope,
+    pub account: AccountChoice,
+    pub organizations: ScopeCatalog<Organization>,
+    pub repositories: ScopeCatalog<GithubRepository>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalMenuKind {
+    Actions,
+    Accounts,
+    Repositories,
+}
 #[derive(Debug, Clone)]
 pub struct LocalMenu {
+    pub kind: LocalMenuKind,
     pub trigger: GithubAction,
     pub items: Vec<(GithubAction, String)>,
     pub list: ModalListState,
@@ -212,10 +259,11 @@ pub struct Geometry {
     pub detail: Rect,
     pub status: Rect,
     pub controls: Vec<Control>,
-    pub modal: Rect,
+    pub scope_controls: Vec<Control>,
     pub input: Rect,
     pub files: Rect,
     pub menu: Rect,
+    pub modal: Rect,
 }
 #[derive(Debug, Clone)]
 pub struct TextBuffer {
@@ -393,6 +441,7 @@ struct Tracked {
 #[derive(Debug, Clone)]
 pub struct GithubScreen {
     pub scope: ResolvedGithubScope,
+    pub scope_state: ScopeState,
     pub tab: GithubTab,
     pub repository: Option<GithubRepository>,
     pub queue: Queue,
@@ -449,6 +498,12 @@ pub struct GithubScreen {
 impl GithubScreen {
     pub fn new(scope: ResolvedGithubScope) -> Self {
         let mut screen = Self {
+            scope_state: ScopeState {
+                default: scope.clone(),
+                account: AccountChoice::Default,
+                organizations: ScopeCatalog::default(),
+                repositories: ScopeCatalog::default(),
+            },
             scope,
             tab: GithubTab::Overview,
             repository: None,

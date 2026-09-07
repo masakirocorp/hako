@@ -624,7 +624,12 @@ fn collect_visible_placements_for_view(
         return Vec::new();
     };
     for info in &view.computed.pane_infos {
-        if view.github.is_some() && view.github_pane_id == Some(info.id) {
+        if view
+            .github
+            .as_ref()
+            .and(view.github_host.as_ref())
+            .is_some_and(|host| host.root_pane() == info.id)
+        {
             continue;
         }
         if blit_pane.is_some_and(|pane_id| pane_id != info.id) {

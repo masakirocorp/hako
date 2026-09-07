@@ -41,6 +41,10 @@ pub struct Viewer {
     pub login: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Organization {
+    pub login: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Label {
     pub name: String,
     pub color: String,
@@ -304,6 +308,14 @@ impl GithubMutation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GithubRequest {
     Viewer,
+    Organizations {
+        cursor: Option<String>,
+        page_size: usize,
+    },
+    ScopeRepositories {
+        cursor: Option<String>,
+        page_size: usize,
+    },
     Repositories {
         cursor: Option<String>,
         page_size: usize,
@@ -335,6 +347,8 @@ pub enum GithubRequest {
 #[derive(Debug, Clone)]
 pub enum GithubResponse {
     Viewer(Viewer),
+    Organizations(Page<Organization>),
+    ScopeRepositories(Page<GithubRepository>),
     Repositories(Page<GithubRepository>),
     Repository(RepositoryDetails),
     Queue(Page<Summary>),
