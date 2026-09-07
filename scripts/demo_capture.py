@@ -25,63 +25,148 @@ from scripts.demo_session import (
     close_capture_window,
     default_bin,
     default_home,
+    focus_capture_process,
+    focus_named_workspace_tab,
     focus_showcase,
     install_fixture,
+    is_capture_window,
+    list_ghostty_windows,
     open_capture_window,
     prepare_demo_runtime,
     report_demo_states,
+    restore_other_ghostty,
     seed,
     session_path,
     start_server,
     stop_server,
 )
 
+
+
+def cell_px(col: float, row: float) -> tuple[int, int]:
+    width = CAPTURE_WINDOW["width"] / CAPTURE_WINDOW["columns"]
+    height = CAPTURE_WINDOW["height"] / CAPTURE_WINDOW["rows"]
+    return (int(col * width + width / 2), int(row * height + height / 2))
+
+
+def pointer(kind: str, col: float, row: float) -> tuple[str, ...]:
+    if kind == "Move":
+        return (f"MoveCell {col},{row}",)
+    return (f"MoveCell {col},{row}", "Wait 500", f"{kind}Cell {col},{row}")
+
+
+
+
 THEMES = ("day", "night")
 
 SHOTS = (
     {"name": "workspace", "theme": "day", "video": True, "keys": ()},
     {"name": "workspace", "theme": "night", "video": True, "keys": ()},
-    {"name": "groups", "theme": "day", "video": True, "keys": ("Ctrl+G",)},
-    {"name": "groups", "theme": "night", "video": True, "keys": ("Ctrl+G",)},
+    {
+        "name": "groups",
+        "theme": "day",
+        "video": True,
+        "keys": pointer("Click", 26, 0)
+        + ("Wait 500",)
+        + pointer("Move", 26, 3)
+        + pointer("Click", 31, 6)
+        + ("Wait 900",),
+    },
+    {
+        "name": "groups",
+        "theme": "night",
+        "video": True,
+        "keys": pointer("Click", 26, 0)
+        + ("Wait 500",)
+        + pointer("Move", 26, 3)
+        + pointer("Click", 31, 6)
+        + ("Wait 900",),
+    },
+    {
+        "name": "agents",
+        "theme": "day",
+        "video": True,
+        "keys": pointer("Click", 26, 23)
+        + ("Wait 500",)
+        + pointer("Move", 26, 26)
+        + pointer("Click", 31, 28)
+        + ("Wait 900",),
+    },
+    {
+        "name": "agents",
+        "theme": "night",
+        "video": True,
+        "keys": pointer("Click", 26, 23)
+        + ("Wait 500",)
+        + pointer("Move", 26, 26)
+        + pointer("Click", 31, 28)
+        + ("Wait 900",),
+    },
     {
         "name": "follow-up",
         "theme": "day",
         "video": True,
-        "keys": ("RightClick 120,790",),
+        "keys": pointer("RightClick", 6, 28) + ("Wait 1200",),
     },
     {
         "name": "follow-up",
         "theme": "night",
         "video": True,
-        "keys": ("RightClick 120,790",),
+        "keys": pointer("RightClick", 6, 28) + ("Wait 1200",),
+    },
+    {
+        "name": "collapsed-status",
+        "theme": "day",
+        "video": True,
+        "keys": pointer("Click", 30, CAPTURE_WINDOW["rows"] - 2)
+        + ("Wait 700",)
+        + pointer("Move", 1.5, 3.5)
+        + ("Wait 900",),
     },
     {
         "name": "collapsed-status",
         "theme": "night",
         "video": True,
-        "sidebar_collapsed": True,
-        "keys": ("Move 18,96", "Wait 900"),
+        "keys": pointer("Click", 30, CAPTURE_WINDOW["rows"] - 2)
+        + ("Wait 700",)
+        + pointer("Move", 1.5, 3.5)
+        + ("Wait 900",),
+    },
+    {
+        "name": "commands",
+        "theme": "day",
+        "video": True,
+        "keys": pointer("Click", 1, CAPTURE_WINDOW["rows"] - 1) + ("Wait 900",),
     },
     {
         "name": "commands",
         "theme": "night",
         "video": True,
-        "keys": ("Click 400,14",),
+        "keys": pointer("Click", 1, CAPTURE_WINDOW["rows"] - 1) + ("Wait 900",),
+    },
+    {
+        "name": "triage",
+        "theme": "day",
+        "video": True,
+        "keys": pointer("Click", 8, 28) + ("Wait 900",),
     },
     {
         "name": "triage",
         "theme": "night",
         "video": True,
-        "keys": ("Click 248,448",),
+        "keys": pointer("Click", 8, 28) + ("Wait 900",),
     },
 )
-
 
 PUBLIC_DIR = REPO_ROOT / "website" / "public"
 PUBLIC_NAMES = {
     "workspace": "session",
     "groups": "groups",
+    "agents": "agents",
     "follow-up": "follow-up",
+    "collapsed-status": "collapsed",
+    "commands": "commands",
+    "triage": "triage",
 }
 
 
@@ -111,16 +196,94 @@ def public_stem(shot: dict[str, Any]) -> str | None:
     return name
 
 
+def media_height_px(path: Path) -> int:
+    if path.suffix == ".png":
+        from PIL import Image
+
+        with Image.open(path) as image:
+            return image.size[1]
+
+    completed = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=height",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return int((completed.stdout or "0").strip() or 0)
+
+
+def titlebar_crop_px(path: Path, png_source: Path) -> int:
+    bar = int(CAPTURE_WINDOW.get("pad_top") or 0)
+    if bar <= 0 or not path.is_file() or not png_source.is_file():
+        return 0
+    from PIL import Image
+
+    with Image.open(png_source) as image:
+        png_height = image.size[1]
+    scale = 2 if png_height >= 1600 else 1
+    logical_height = png_height / scale
+    file_height = media_height_px(path)
+    if logical_height <= 0 or file_height <= 0:
+        return 0
+    return max(0, round(file_height * bar / logical_height))
+
+
+
+def crop_published_titlebar(path: Path, bar: int) -> None:
+    if bar <= 0 or not path.is_file():
+        return
+    if path.suffix == ".png":
+        from PIL import Image
+
+        image = Image.open(path)
+        cropped = image.crop((0, bar, image.size[0], image.size[1]))
+        cropped.save(path)
+        return
+    if path.suffix == ".mp4":
+        tmp = path.with_suffix(".crop.mp4")
+        completed = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(path),
+                "-vf",
+                f"crop=iw:ih-{bar}:0:{bar}",
+                str(tmp),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode == 0 and tmp.is_file():
+            tmp.replace(path)
+
+
 def publish_shot_assets(shot: dict[str, Any]) -> None:
     public = public_stem(shot)
     if public is None:
         return
     stem = shot_stem(shot)
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+    png_source = OUT_DIR / f"{stem}.png"
     for suffix in (".png", ".mp4"):
         source = OUT_DIR / f"{stem}{suffix}"
         if source.is_file():
-            shutil.copy2(source, PUBLIC_DIR / f"{public}{suffix}")
+            dest = PUBLIC_DIR / f"{public}{suffix}"
+            shutil.copy2(source, dest)
+            crop_published_titlebar(dest, titlebar_crop_px(dest, png_source))
+
 
 
 
@@ -141,17 +304,6 @@ def resolve_shots(name: str, theme: str) -> list[dict[str, Any]]:
     return [{**named[0], "theme": theme}]
 
 
-def which_tool(name: str, candidates: tuple[str, ...] = ()) -> Path | None:
-    found = shutil.which(name)
-    if found:
-        return Path(found)
-    for candidate in candidates:
-        path = Path(candidate)
-        if path.is_file() and os.access(path, os.X_OK):
-            return path
-    return None
-
-
 def key_to_cliclick(key: str, window: dict[str, Any]) -> list[str]:
     if key.startswith("Ctrl+") and len(key) == 6:
         letter = key[-1].lower()
@@ -164,9 +316,22 @@ def key_to_cliclick(key: str, window: dict[str, Any]) -> list[str]:
         return ["kp:space"]
     if key == "Enter":
         return ["kp:return"]
+    if key == "Down":
+        return ["kp:arrow-down"]
     if key.startswith("Wait "):
         return [f"w:{int(key.split()[1])}"]
     kind, _, coords = key.partition(" ")
+    if kind.endswith("Cell") and coords:
+        action = kind[: -len("Cell")]
+        col_text, _, row_text = coords.partition(",")
+        pad_top = int(CAPTURE_WINDOW.get("pad_top") or 0)
+        cell_w = int(window["width"]) / CAPTURE_WINDOW["columns"]
+        cell_h = (int(window["height"]) - pad_top) / CAPTURE_WINDOW["rows"]
+        x = int(window["x"] + float(col_text) * cell_w + cell_w / 2)
+        y = int(window["y"] + pad_top + float(row_text) * cell_h + cell_h / 2)
+        prefix = {"Click": "c", "RightClick": "rc", "Move": "m"}[action]
+        return [f"{prefix}:{x},{y}"]
+
     if kind in {"Click", "RightClick", "Move"} and coords:
         x_text, _, y_text = coords.partition(",")
         x = int(window["x"]) + int(x_text)
@@ -177,22 +342,12 @@ def key_to_cliclick(key: str, window: dict[str, Any]) -> list[str]:
 
 
 
-CART_TAB_HIT = (280, 14)
-
-
-def tab_click(window: dict[str, Any]) -> str:
-    x = int(window["x"]) + CART_TAB_HIT[0]
-    y = int(window["y"]) + CART_TAB_HIT[1]
-    return f"c:{x},{y}"
 
 
 def cliclick_commands(keys: tuple[str, ...], window: dict[str, Any]) -> list[str]:
     if not keys:
         return []
-    has_target_click = any(key.startswith("Click ") or key.startswith("RightClick ") for key in keys)
     commands: list[str] = []
-    if not has_target_click:
-        commands.extend([tab_click(window), "w:400"])
     for key in keys:
         commands.extend(key_to_cliclick(key, window))
         commands.append("w:500")
@@ -207,6 +362,7 @@ def resolve_cap_window_id(windows: list[dict[str, Any]], title: str) -> str:
     if len(matches) > 1:
         raise RuntimeError(f"multiple Cap windows named {title!r}")
     return str(matches[0]["id"])
+
 
 
 def cap_window_geometry(windows: list[dict[str, Any]], title: str) -> dict[str, Any]:
@@ -255,8 +411,26 @@ def ensure_demo(bin_path: Path, home: Path, reset: bool) -> None:
     install_fixture(home)
 
 
+def which_tool(name: str, candidates: tuple[str, ...] = ()) -> Path | None:
+    found = shutil.which(name)
+    if found:
+        return Path(found)
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return path
+    return None
+
+
 def check_deps(bin_path: Path) -> list[str]:
     missing: list[str] = []
+    try:
+        import PIL.Image
+    except ImportError:
+        missing.append("Pillow (python3 -m pip install Pillow)")
+    for tool in ("ffprobe", "ffmpeg"):
+        if which_tool(tool) is None:
+            missing.append(f"{tool} (brew install ffmpeg)")
     if which_tool("cap", CAP_CANDIDATES) is None:
         missing.append("cap CLI (install Cap.app, then `cap desktop install` or put cap on PATH)")
     if which_tool("cliclick", CLICLICK_CANDIDATES) is None:
@@ -301,13 +475,14 @@ def list_cap_windows(cap: Path) -> list[dict[str, Any]]:
 
 def run_cliclick(cliclick: Path, commands: list[str]) -> None:
     completed = subprocess.run(
-        [str(cliclick), "-e", "1", *commands],
+        [str(cliclick), *commands],
         check=False,
         capture_output=True,
         text=True,
     )
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "cliclick failed")
+
 
 
 def start_recording(cap: Path, window_id: str, project: Path) -> str:
@@ -398,6 +573,8 @@ def set_os_dark_mode(dark: bool) -> None:
             completed.stderr.strip()
             or "cannot set macOS appearance (grant Automation for System Events)"
         )
+
+
 def prepare_shot(
     bin_path: Path,
     home: Path,
@@ -415,8 +592,6 @@ def prepare_shot(
     return open_capture_window(bin_path, home, theme)
 
 
-
-
 def capture_shot(
     shot: dict[str, Any],
     bin_path: Path,
@@ -426,44 +601,66 @@ def capture_shot(
     *,
     video: bool,
 ) -> None:
-    window = prepare_shot(
+    opened = prepare_shot(
         bin_path,
         home,
         shot["theme"],
         sidebar_collapsed=bool(shot.get("sidebar_collapsed")),
     )
+    hidden = list(opened.get("hidden_ghostty") or ())
+    try:
+        focus = shot.get("focus")
+        if focus:
+            focus_named_workspace_tab(bin_path, home, focus[0], focus[1])
 
-    report_demo_states(bin_path, home)
-    cap_windows = list_cap_windows(cap)
-    window_id = resolve_cap_window_id(cap_windows, CAPTURE_WINDOW_TITLE)
-    hit = cap_window_geometry(cap_windows, CAPTURE_WINDOW_TITLE)
-    commands = cliclick_commands(tuple(shot.get("keys") or ()), hit)
-    stem = shot_stem(shot)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    png = OUT_DIR / f"{stem}.png"
-    if commands:
-        run_cliclick(cliclick, commands)
-        time.sleep(0.8)
-
-    if shot["name"] == "workspace":
-        focus_showcase(bin_path, home)
         report_demo_states(bin_path, home)
         time.sleep(0.3)
-    screenshot_window(cap, window_id, png)
+        cap_windows = list_cap_windows(cap)
+        window_id = resolve_cap_window_id(cap_windows, CAPTURE_WINDOW_TITLE)
+        matches = [window for window in list_ghostty_windows() if is_capture_window(window)]
+        if not matches:
+            raise RuntimeError("Quartz did not see the Gardn Demo Capture window")
+        hit = {
+            "x": int(matches[0]["x"]),
+            "y": int(matches[0]["y"]),
+            "width": int(matches[0]["width"]),
+            "height": int(matches[0]["height"]),
+        }
+        commands = cliclick_commands(tuple(shot.get("keys") or ()), hit)
+        focus_capture_process(int(matches[0]["pid"]))
+        time.sleep(0.2)
 
-
-    if not video or not shot.get("video"):
-        return
-    project = OUT_DIR / f"{stem}.cap"
-    mp4 = OUT_DIR / f"{stem}.mp4"
-    recording_id = start_recording(cap, window_id, project)
-    try:
-        if commands:
-            run_cliclick(cliclick, commands)
-        time.sleep(1.5)
+        stem = shot_stem(shot)
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        png = OUT_DIR / f"{stem}.png"
+        recording_id = None
+        project = OUT_DIR / f"{stem}.cap"
+        mp4 = OUT_DIR / f"{stem}.mp4"
+        if video and shot.get("video"):
+            recording_id = start_recording(cap, window_id, project)
+            focus_capture_process(int(matches[0]["pid"]))
+            time.sleep(0.2)
+        try:
+            if commands:
+                run_cliclick(cliclick, commands)
+            if shot["name"] == "workspace":
+                focus_showcase(bin_path, home)
+                report_demo_states(bin_path, home)
+                time.sleep(0.3)
+            else:
+                time.sleep(0.4)
+            cap_windows = list_cap_windows(cap)
+            window_id = resolve_cap_window_id(cap_windows, CAPTURE_WINDOW_TITLE)
+            screenshot_window(cap, window_id, png)
+            if recording_id is not None:
+                time.sleep(1.2)
+        finally:
+            if recording_id is not None:
+                stop_recording(cap, recording_id)
+                export_recording(cap, project, mp4)
     finally:
-        stop_recording(cap, recording_id)
-    export_recording(cap, project, mp4)
+        restore_other_ghostty(hidden)
+        close_capture_window()
 
 
 
